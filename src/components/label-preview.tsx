@@ -2,7 +2,7 @@
 
 import type * as React from 'react';
 import { useState, useEffect, useMemo, useCallback, useTransition } from 'react';
-import { Printer, FileText, Loader2, RefreshCw, Settings2, Pilcrow, AlignLeft, AlignCenter, AlignRight, CaseSensitive, Image as ImageIcon, WifiOff, ServerCrash, Info } from 'lucide-react'; // Add WifiOff, ServerCrash, Info
+import { Printer, FileText, Loader2, RefreshCw, Settings2, AlignLeft, AlignCenter, AlignRight, Image as ImageIcon, WifiOff, ServerCrash, Info, Download } from 'lucide-react'; // Added Download icon
 
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
@@ -129,6 +129,7 @@ export function LabelPreview({
   // --- Determine Print Button State ---
   const isPrintDisabled = isLoading || !canGenerate || !selectedPrinter || apiStatus !== 'healthy';
   const getPrintButtonTooltip = () => {
+    if (isLoading) return "Processing...";
     if (!canGenerate) return "Generate label content first";
     if (apiStatus === 'pending') return "Connecting to print service...";
     if (apiStatus === 'unhealthy') return "Print service unavailable";
@@ -163,6 +164,7 @@ export function LabelPreview({
 
     const generatePreview = async () => {
       if (canGenerate && summary && items.length > 0) {
+        setIsGeneratingPdf(true); // Start generating state
         try {
           const imageToInclude = includeImageChecked ? processedImageDataUri : null;
           const labelContent: LabelContent = { summary, items, formatting: formattingOptions, imageDataUri: imageToInclude };
@@ -176,15 +178,18 @@ export function LabelPreview({
           console.error('Preview PDF generation failed:', error);
           setPdfPreviewUrl(null);
           toast({ title: 'Error', description: 'Failed to generate PDF preview.', variant: 'destructive' });
+        } finally {
+          setIsGeneratingPdf(false); // End generating state
         }
       } else {
         setPdfPreviewUrl(null);
       }
     };
 
+    // Debounce generation slightly to avoid rapid regeneration on formatting changes
     const timeoutId = setTimeout(() => {
       startPreviewTransition(generatePreview);
-    }, 300);
+    }, 300); // 300ms debounce
 
     return () => {
       clearTimeout(timeoutId);
@@ -202,15 +207,15 @@ export function LabelPreview({
   }, [items, onRegenerateSummary]);
 
   const handlePrint = async () => {
-    if (!canGenerate || !summary || !selectedPrinter || apiStatus !== 'healthy') {
-      toast({ title: 'Cannot Print', description: getPrintButtonTooltip(), variant: 'destructive' });
+    if (isPrintDisabled) {
+      toast({ title: 'Cannot Print', description: getPrintButtonTooltip(), variant: 'warning' });
       return;
     }
     setIsPrinting(true);
     setPrintError(null);
 
     const imageToInclude = includeImageChecked ? processedImageDataUri : null;
-    const labelContent: LabelContent = { summary, items, formatting: formattingOptions, imageDataUri: imageToInclude };
+    const labelContent: LabelContent = { summary: summary!, items, formatting: formattingOptions, imageDataUri: imageToInclude }; // Ensure summary is not null here
 
     try {
       // 1. Generate PDF using dimensions
@@ -224,6 +229,7 @@ export function LabelPreview({
         body: JSON.stringify({
           pdfData: base64Pdf,
           printerName: selectedPrinter, // Send selected printer name
+          labelSummary: summary // Include summary for job name
         }),
       });
 
@@ -257,7 +263,7 @@ export function LabelPreview({
 
   const handleDownloadPdf = async () => {
     if (!canGenerate || !summary) {
-      toast({ title: 'Error', description: 'Cannot download PDF without summary and items.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Cannot download PDF without generated content.', variant: 'destructive' });
       return;
     }
     setIsGeneratingPdf(true);
@@ -292,9 +298,9 @@ export function LabelPreview({
 
 
   return (
-    <Card className="flex flex-col h-full">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-lg font-semibold flex items-center gap-2">
+    <Card className="flex flex-col h-full shadow-md">
+      <CardHeader className="flex flex-row items-center justify-between p-4 border-b"> {/* Adjusted padding */}
+        <CardTitle className="text-xl font-semibold flex items-center gap-2"> {/* Increased size */}
           <FileText className="h-5 w-5" />
           4. Label Preview & Actions
         </CardTitle>
@@ -304,7 +310,7 @@ export function LabelPreview({
               <Settings2 className="h-5 w-5" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-64 p-4 space-y-4">
+          <PopoverContent className="w-64 p-4 space-y-4 bg-card border shadow-lg rounded-md">
             <div className="space-y-2">
               <Label htmlFor="font-family" className="text-sm font-medium">Font Family</Label>
               <Select
@@ -347,7 +353,7 @@ export function LabelPreview({
                 aria-label="Include image on label"
               />
               <Label htmlFor="include-image" className="text-sm font-medium cursor-pointer"> Include Image </Label>
-              {isProcessingImage && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isProcessingImage && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
             </div>
             {!photoDataUri && (
               <p className="text-xs text-muted-foreground">Upload photo to enable image inclusion.</p>
@@ -355,9 +361,9 @@ export function LabelPreview({
           </PopoverContent>
         </Popover>
       </CardHeader>
-      <CardContent className="flex-grow flex flex-col items-center justify-center p-2 bg-muted/20 min-h-[150px]">
+      <CardContent className="flex-grow flex flex-col items-center justify-center p-4 bg-muted/30 min-h-[200px] relative overflow-hidden"> {/* Increased min-height, added padding */}
         {printError && (
-          <Alert variant="destructive" className="mb-4 w-full max-w-sm">
+          <Alert variant="destructive" className="absolute top-4 left-4 right-4 max-w-sm mx-auto z-20 shadow-lg">
             <Info className="h-4 w-4" />
             <AlertTitle>Printing Service Issue</AlertTitle>
             <AlertDescription>
@@ -366,37 +372,50 @@ export function LabelPreview({
             </AlertDescription>
           </Alert>
         )}
-        {isLoading && !pdfPreviewUrl && (
-          <div className="w-full h-full flex items-center justify-center">
-            <Skeleton className="w-[80%] h-[80%] max-w-xs max-h-60" style={{ aspectRatio: labelAspectRatio }} />
+        {(isLoading || isGeneratingPreview || isProcessingImage) && !pdfPreviewUrl && (
+          <div className="w-full h-full flex items-center justify-center absolute inset-0 bg-background/50 z-10">
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">
+                {isGeneratingSummary ? 'Generating Summary...' :
+                 isProcessingImage ? 'Processing Image...' :
+                 'Generating Preview...'}
+              </p>
+            </div>
           </div>
         )}
-        {!isLoading && !canGenerate && !printError && (
-          <div className="text-center text-muted-foreground text-sm p-4">
+        {!isLoading && !canGenerate && !printError && !pdfPreviewUrl && (
+          <div className="text-center text-muted-foreground text-base italic p-4"> {/* Increased size */}
             {summary === 'Empty' ? 'No items identified to generate a label.' : 'Identify items or generate summary first.'}
           </div>
         )}
-        {pdfPreviewUrl && (
-          <div className="relative w-full h-full max-w-md mx-auto" style={{ aspectRatio: labelAspectRatio }}>
-            {(isGeneratingPreview || (includeImageChecked && isProcessingImage)) && (
-              <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10 rounded-md">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
+        {/* PDF Preview Area */}
+        <div
+            className="relative w-full max-w-md mx-auto flex-grow flex items-center justify-center"
+            style={{ aspectRatio: labelAspectRatio }}
+        >
+            {pdfPreviewUrl ? (
+                <iframe
+                    key={pdfGenerationKey}
+                    src={pdfPreviewUrl}
+                    title="Label Preview"
+                    className={cn(
+                        "w-full h-full border rounded-md shadow-lg bg-white", // Added bg-white for contrast
+                         (isGeneratingPreview || isProcessingImage) && "opacity-50"
+                    )}
+                    style={{ contain: 'content' }}
+                />
+            ) : (
+                <Skeleton className="w-full h-full" style={{ aspectRatio: labelAspectRatio }} />
             )}
-            <iframe
-              key={pdfGenerationKey}
-              src={pdfPreviewUrl}
-              title="Label Preview"
-              className={cn(
-                "w-full h-full border rounded-md shadow-sm",
-                (isGeneratingPreview || (includeImageChecked && isProcessingImage)) && "opacity-50"
-              )}
-              style={{ contain: 'content' }}
-            />
-          </div>
-        )}
+             {(isGeneratingPreview || (includeImageChecked && isProcessingImage)) && pdfPreviewUrl && (
+                <div className="absolute inset-0 bg-background/60 flex items-center justify-center z-10 rounded-md">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+            )}
+        </div>
       </CardContent>
-      <CardFooter className="flex flex-col sm:flex-row justify-between items-center gap-2 p-4 border-t">
+      <CardFooter className="flex flex-col sm:flex-row justify-between items-center gap-3 p-4 border-t"> {/* Increased gap */}
         <Button
           variant="outline"
           onClick={handleRegenerateClick}
@@ -404,19 +423,29 @@ export function LabelPreview({
           aria-label="Regenerate Summary"
           className="w-full sm:w-auto"
         >
-          {isGeneratingSummary ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          {isGeneratingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           <span className="ml-2">Regenerate</span>
         </Button>
-        <div className="flex gap-2 w-full sm:w-auto justify-end">
-          <Button
-            variant="outline"
-            onClick={handleDownloadPdf}
-            disabled={!canGenerate || isLoading}
-            aria-label="Download PDF"
-          >
-            {isGeneratingPdf ? <Loader2 className="animate-spin" /> : <FileText />}
-            <span className="ml-2 hidden sm:inline">PDF</span>
-          </Button>
+        <div className="flex gap-3 w-full sm:w-auto justify-end"> {/* Increased gap */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+               <span className={cn((!canGenerate || isLoading) && "cursor-not-allowed")}>
+                  <Button
+                    variant="outline"
+                    onClick={handleDownloadPdf}
+                    disabled={!canGenerate || isLoading}
+                    aria-label="Download PDF"
+                     className={cn((!canGenerate || isLoading) && "pointer-events-none")}
+                  >
+                    {isGeneratingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    <span className="ml-2 hidden sm:inline">Download</span>
+                  </Button>
+               </span>
+            </TooltipTrigger>
+            <TooltipContent>
+               <p>{!canGenerate ? "Generate label first" : "Download label as PDF"}</p>
+            </TooltipContent>
+           </Tooltip>
           {/* Print Button with Tooltip */}
           <Tooltip>
               <TooltipTrigger asChild>
@@ -427,13 +456,13 @@ export function LabelPreview({
                     disabled={isPrintDisabled}
                     aria-label="Print Label via Desktop App"
                     // Remove pointer events if disabled so span cursor takes effect
-                    className={cn(isPrintDisabled && "pointer-events-none")}
+                    className={cn("w-full sm:w-auto", isPrintDisabled && "pointer-events-none")}
                   >
-                    {isPrinting ? <Loader2 className="animate-spin" /> :
-                     apiStatus === 'unhealthy' ? <WifiOff /> :
-                     apiStatus === 'pending' ? <ServerCrash /> :
-                     <Printer />}
-                    <span className="ml-2 hidden sm:inline">Print</span>
+                    {isPrinting ? <Loader2 className="h-4 w-4 animate-spin" /> :
+                     apiStatus === 'unhealthy' ? <WifiOff className="h-4 w-4" /> :
+                     apiStatus === 'pending' ? <ServerCrash className="h-4 w-4" /> :
+                     <Printer className="h-4 w-4" />}
+                    <span className="ml-2">Print</span>
                   </Button>
                 </span>
               </TooltipTrigger>

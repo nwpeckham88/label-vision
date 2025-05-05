@@ -1,4 +1,4 @@
-'use client';
+{'use client';
 
 import type { FC } from 'react';
 import { useState, useCallback, useTransition, useMemo, useEffect } from 'react';
@@ -7,6 +7,7 @@ import { generateSummaryFromItems } from '@/ai/flows/generate-label-from-items';
 import { PhotoUploader } from '@/components/photo-uploader';
 import { ItemList } from '@/components/item-list';
 import { LabelPreview } from '@/components/label-preview';
+import { ThemeToggle } from '@/components/theme-toggle'; // Import ThemeToggle
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -235,24 +236,28 @@ const LabelVisionPage: FC = () => {
     <TooltipProvider>
       <div className="container mx-auto p-4 md:p-8 min-h-screen flex flex-col bg-background">
         <header className="mb-8 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2 flex items-center gap-2">
-              <Wand2 className="text-primary h-8 w-8" /> Label Vision
-            </h1>
-            <p className="text-muted-foreground">
-              Upload a photo, identify items, generate a label, and print it.
-            </p>
+          <div className="flex items-center gap-3">
+             <Wand2 className="text-primary h-8 w-8" />
+             <div>
+                <h1 className="text-3xl md:text-4xl font-bold text-foreground">Label Vision</h1>
+                <p className="text-muted-foreground">
+                    Upload a photo, identify items, generate a label, and print it.
+                </p>
+             </div>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-                <div className="p-2 rounded-full bg-muted/50">
-                 {getApiStatusIcon()}
-                </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{getApiStatusTooltip()}</p>
-            </TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                  <div className="p-2 rounded-full bg-card border border-border shadow-sm">
+                  {getApiStatusIcon()}
+                  </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{getApiStatusTooltip()}</p>
+              </TooltipContent>
+            </Tooltip>
+             <ThemeToggle /> {/* Add ThemeToggle */}
+          </div>
         </header>
 
         {error && (
@@ -263,12 +268,12 @@ const LabelVisionPage: FC = () => {
           </Alert>
         )}
 
-        <main className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-6">
+        <main className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Column 1: Upload & Settings */}
-          <div className="flex flex-col gap-6 md:order-1">
-            <Card>
+          <div className="flex flex-col gap-6 lg:order-1">
+            <Card className="shadow-md">
               <CardHeader>
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <CardTitle className="text-xl font-semibold flex items-center gap-2">
                   <Upload className="h-5 w-5" />
                   1. Upload Photo
                 </CardTitle>
@@ -291,16 +296,16 @@ const LabelVisionPage: FC = () => {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="shadow-md">
               <CardHeader>
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <CardTitle className="text-xl font-semibold flex items-center gap-2">
                   <Ruler className="h-5 w-5" />
                   2. Label Settings
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <Label htmlFor="label-size" className="mb-2 block">Label Size</Label>
+                  <Label htmlFor="label-size" className="mb-2 block font-medium">Label Size</Label>
                   <Select
                     value={selectedLabelSizeKey}
                     onValueChange={handleLabelSizeChange}
@@ -321,7 +326,7 @@ const LabelVisionPage: FC = () => {
                   </Select>
                 </div>
                 <div>
-                  <Label htmlFor="printer-select" className="mb-2 block">Printer</Label>
+                  <Label htmlFor="printer-select" className="mb-2 block font-medium">Printer</Label>
                   <Select
                     value={selectedPrinter ?? ''}
                     onValueChange={handlePrinterChange}
@@ -357,12 +362,12 @@ const LabelVisionPage: FC = () => {
           </div>
 
           {/* Column 2: Identify */}
-          <div className="flex flex-col gap-6 md:order-2">
+          <div className="flex flex-col gap-6 lg:order-2">
             <ItemList items={identifiedItems} isLoading={isIdentifying} title="3. Identified Items" />
           </div>
 
           {/* Column 3: Generate & Print */}
-          <div className="flex flex-col gap-6 md:order-3">
+          <div className="flex flex-col gap-6 lg:order-3">
             <LabelPreview
               summary={summary}
               items={identifiedItems}
@@ -380,7 +385,7 @@ const LabelVisionPage: FC = () => {
 
         <footer className="mt-12 text-center text-sm text-muted-foreground">
           <Separator className="my-4" />
-          Powered by Firebase Studio & Genkit
+          Powered by Google Cloud & Genkit
         </footer>
       </div>
     </TooltipProvider>
