@@ -1,0 +1,12 @@
+version: '3.8' # Specifies the Docker Compose file format version
+
+services:
+  app: # Defines the main application service
+    build: . # Instructs Docker Compose to build the image using the Dockerfile in the current directory
+    env_file:
+      - .env # Loads environment variables from the .env file in the current directory
+    ports:
+      - "3000:5001" # Maps port 3000 on the host to port 3000 in the container (adjust if your app uses a different port)
+    # volumes: # Optional: Uncomment and adjust if you need to mount local directories into the container (useful for development)
+    #   - ./src:/app/src # Example: Mounts the local ./src directory to /app/src inside the container
+    restart: unless-stopped # Configures the container to restart automatically unless manually stopped

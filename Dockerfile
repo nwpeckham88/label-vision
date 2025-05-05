@@ -28,14 +28,17 @@ WORKDIR /app
 # Adjust as needed for your specific base image or OS requirements
 # pycups needs libcups2-dev and build-essential for compilation
 # pywin32 is Windows-only and usually pre-compiled wheels are available
+# google-generativeai might need specific certs if behind strict proxies, but usually fine.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcups2 \
     libcups2-dev \
     build-essential \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python requirements first to leverage Docker cache
 COPY python-print-service/requirements.txt ./python-print-service/
+# Install Python dependencies, including the new google-generativeai
 RUN pip install --no-cache-dir -r python-print-service/requirements.txt
 
 # Copy the Python backend code

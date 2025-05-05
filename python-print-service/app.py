@@ -1,4 +1,3 @@
-
 import os
 import platform
 import tempfile
@@ -7,6 +6,13 @@ import subprocess
 import logging
 import requests # For optional status callback
 import sys
+import io # For handling image bytes
+
+# --- Gen AI Imports and Config ---
+import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions # For specific error handling
+from PIL import Image # To check image format/validity
+# --- End Gen AI Imports and Config ---
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
@@ -28,6 +34,21 @@ else:
     WEB_APP_DIR = os.path.abspath(os.path.join(APP_BASE_DIR, '..', 'out'))
     logging.info(f"Running in development mode. APP_BASE_DIR: {APP_BASE_DIR}, WEB_APP_DIR: {WEB_APP_DIR}")
 
+# --- Configure Gen AI ---
+# IMPORTANT: Configure API Key securely, preferably via environment variable
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+if not GEMINI_API_KEY:
+    logging.warning("GEMINI_API_KEY environment variable not set. Label generation will not work.")
+    genai_configured = False
+else:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        genai_configured = True
+        logging.info("Google Generative AI configured successfully.")
+    except Exception as e:
+        logging.error(f"Failed to configure Google Generative AI: {e}", exc_info=True)
+        genai_configured = False
+# --- End Configure Gen AI ---
 
 # --- Configuration ---
 # Configure logging
@@ -248,6 +269,133 @@ def get_printers_api():
 
     return jsonify(printers)
 
+@app.route('/api/process-image-for-label', methods=['POST'])
+def process_image_api():
+    """API endpoint to process an image, identify items, generate a summary, and return both."""
+    logging.info("API process image for label requested.")
+
+    if not genai_configured:
+        logging.error("Process image endpoint called but GenAI is not configured.")
+        return jsonify({"detail": "AI service not configured. Check GEMINI_API_KEY."}), 503
+
+    if not request.is_json:
+        return jsonify({"detail": "Request must be JSON"}), 400
+
+    data = request.get_json()
+    image_b64 = data.get('imageData') # Expecting Base64 image data
+
+    if not image_b64:
+        return jsonify({"detail": "Missing 'imageData' (Base64) in request body"}), 400
+
+    try:
+        # Decode Base64 image data
+        image_bytes = base64.b64decode(image_b64)
+        # Validate image data using PIL
+        img = Image.open(io.BytesIO(image_bytes))
+        img.verify() # Verify that it's a valid image file
+        # Reopen after verify
+        img = Image.open(io.BytesIO(image_bytes))
+        # Determine image format for the API call
+        image_format = img.format
+        if not image_format or image_format.lower() not in ['png', 'jpeg', 'jpg', 'webp', 'heic', 'heif']:
+            logging.warning(f"Unsupported image format detected: {image_format}. Attempting anyway.")
+            # Default to jpeg if format is unknown/unsupported by common web standards
+            mime_type = "image/jpeg"
+        else:
+            mime_type = f"image/{image_format.lower().replace('jpg', 'jpeg')}"
+
+        logging.info(f"Decoded {len(image_bytes)} bytes of image data. Format: {image_format}, MIME type for API: {mime_type}")
+
+        # Prepare image part for Gemini API
+        image_part = {
+            "mime_type": mime_type,
+            "data": image_bytes
+        }
+
+    except (TypeError, base64.binascii.Error) as e:
+        logging.error(f"Invalid Base64 image data received: {e}")
+        return jsonify({"detail": "Invalid Base64 encoding for imageData"}), 400
+    except UnidentifiedImageError:
+        logging.error("Failed to identify image format or invalid image data.")
+        return jsonify({"detail": "Invalid or unsupported image data"}), 400
+    except Exception as e:
+        logging.error(f"Error processing image data: {e}", exc_info=True)
+        return jsonify({"detail": "Failed to process image data"}), 500
+
+    try:
+        # Prepare the prompt for item identification and summarization
+        prompt = (
+            "Analyze the provided image.\n"
+            "1. Identify the distinct physical items visible in the image. List them clearly, one item per line.\n"
+            "2. Based ONLY on the items you identified, generate a concise summary (max 5 words) suitable for a label header. Focus on the most prominent items.\n\n"
+            "Format your response exactly like this:\n"
+            "Identified Items:\n"
+            "- Item 1 Name\n"
+            "- Item 2 Name\n"
+            "...\n"
+            "Summary:\n"
+            "Generated Summary Text"
+        )
+
+        # Select the vision model
+        # gemini-1.5-flash-latest is generally good for multimodal tasks
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+
+        # Generate content using the image and prompt
+        logging.info("Sending image and prompt to Gemini for item identification and summary.")
+        # The API expects a list of content parts
+        response = model.generate_content([prompt, image_part])
+
+        # --- Parse the Response --- 
+        # This part is crucial and depends heavily on the model following the format instructions.
+        # It might need adjustments based on actual model output.
+        raw_response_text = response.text.strip()
+        logging.info(f"Received raw response from Gemini:\n{raw_response_text}")
+
+        identified_items = []
+        summary = "Error: Could not parse summary"
+
+        try:
+            items_section = raw_response_text.split("Identified Items:")[1].split("Summary:")[0].strip()
+            summary_section = raw_response_text.split("Summary:")[1].strip()
+
+            # Extract items (lines starting with '-')
+            for line in items_section.split('\n'):
+                if line.strip().startswith('-'):
+                    item = line.strip()[1:].strip() # Remove leading '-' and whitespace
+                    if item:
+                        identified_items.append(item)
+            
+            # Extract summary (first line of the summary section)
+            summary = summary_section.split('\n')[0].strip()
+
+            if not identified_items:
+                 logging.warning("Parsing extracted 0 items, though model response might contain them.")
+            if summary == "Error: Could not parse summary":
+                logging.warning("Parsing failed to extract summary, using default error.")
+
+        except IndexError:
+            logging.error(f"Failed to parse Gemini response structure. Raw response:\n{raw_response_text}")
+            # Attempt a fallback: treat the whole response as summary if parsing fails
+            summary = raw_response_text[:100] # Limit length
+            identified_items = [] # Cannot reliably parse items
+            # Return a specific error? For now, return potentially garbled summary.
+        except Exception as parse_e:
+            logging.error(f"Unexpected error parsing Gemini response: {parse_e}. Raw response:\n{raw_response_text}")
+            summary = raw_response_text[:100]
+            identified_items = []
+        # --- End Parsing --- 
+
+        logging.info(f"Processed result - Items: {identified_items}, Summary: '{summary}'")
+        return jsonify({"identifiedItems": identified_items, "summary": summary})
+
+    except google_exceptions.GoogleAPIError as ge:
+        logging.error(f"Google API error during Gemini call: {ge}", exc_info=True)
+        return jsonify({"detail": f"AI service API error: {ge.message}"}), 502 # Bad Gateway
+    except Exception as e:
+        logging.error(f"Error during Gemini processing: {e}", exc_info=True)
+        return jsonify({"detail": "Failed to process image with AI due to an internal error."}), 500
+
 @app.route('/api/print', methods=['POST'])
 def print_label_api():
     """API endpoint to receive PDF data (Base64) and printer name, then print."""
@@ -377,123 +525,3 @@ if __name__ == '__main__':
     # Run the Flask app
     # Use debug=debug_mode for development reloading
     app.run(host=host, port=port, debug=debug_mode)
-```
-  </change>
-  <change>
-     <file>docs/api/python-desktop-app.md</file>
-     <description>Update Python API documentation to reflect API endpoint changes (prefix /api) and clarify serving mechanism.</description>
-     <content><![CDATA[# API Documentation: Python Desktop Print Service (Flask Backend)
-
-This document describes the API endpoints exposed by the Python Flask application designed to act as a print service and **serve the static Label Vision Next.js web application**.
-
-## Base URL
-
-The Python application runs a local web server. When running locally or in Docker, it typically listens on:
-
-`http://localhost:5001`
-
-(This port can be configured via the `FLASK_RUN_PORT` environment variable).
-
-## Serving the Web Application
-
-*   The Flask application is configured to serve the static files generated by the Next.js build (`npm run build`, which outputs to the `out/` directory).
-*   It serves `out/index.html` for the root path (`/`) and any other non-API path, allowing the Next.js client-side router to handle navigation.
-*   Static assets like CSS, JavaScript, and images located within `out/_next/static/` are served directly by Flask under the `/` path.
-
-## API Endpoints (Prefixed with `/api`)
-
-All backend API endpoints are prefixed with `/api` to distinguish them from the frontend routes.
-
-### 1. Health Check
-
-*   **Endpoint:** `/api/health`
-*   **Method:** `GET`
-*   **Purpose:** Allows the Next.js frontend (running in the browser, served by this Flask app) to check if the Python print service *backend* is running and reachable.
-*   **Request Body:** None
-*   **Responses:**
-    *   **`200 OK`**:
-        *   **Content:** `application/json`
-        *   **Body:** `{ "status": "ok", "platform": "windows|linux|darwin", "printer_lib": "win32|cups|none" }`
-        *   **Description:** The service is running and healthy. Includes basic platform info.
-    *   **(Implicit) Connection Error:** If the Next.js app cannot connect to this endpoint (e.g., `fetch` fails), it indicates a server issue or network problem.
-
-### 2. Get Available Printers
-
-*   **Endpoint:** `/api/printers`
-*   **Method:** `GET`
-*   **Purpose:** Retrieves a list of printer names known to the system where the Python application is running.
-*   **Request Body:** None
-*   **Responses:**
-    *   **`200 OK`**:
-        *   **Content:** `application/json`
-        *   **Body:** `["Printer Name 1", "Microsoft Print to PDF", "My Label Printer ZT410"]` (Example)
-        *   **Description:** Successfully retrieved the list of available printer names as an array of strings. The list might be empty if no printers are found or accessible.
-    *   **`500 Internal Server Error`**:
-        *   **Content:** `application/json`
-        *   **Body:** `{ "detail": "Error message describing the failure" }`
-        *   **Description:** An error occurred on the Python server while trying to list printers (e.g., issues with `win32print` or `pycups`, CUPS service down).
-
-### 3. Print Label
-
-*   **Endpoint:** `/api/print`
-*   **Method:** `POST`
-*   **Purpose:** Receives label data (as a PDF) and sends it to the specified printer.
-*   **Request Body:**
-    *   **Content-Type:** `application/json`
-    *   **Schema:**
-        ```typescript
-        {
-          pdfData: string; // Required: The generated PDF content, encoded as a Base64 string.
-          printerName: string; // Required: The exact name of the target printer (must match one from the /api/printers list).
-          labelSummary?: string; // Optional: A short summary for the print job name.
-          // Optional: Add other print job options here if needed in the future
-        }
-        ```
-    *   **Example:**
-        ```json
-        {
-          "pdfData": "JVBERi0xLjcKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YW...", // Truncated Base64 PDF data
-          "printerName": "My Label Printer ZT410",
-          "labelSummary": "Sample Items"
-        }
-        ```
-*   **Responses:**
-    *   **`200 OK`**:
-        *   **Content:** `application/json`
-        *   **Body:** `{ "message": "Print job sent successfully to [Printer Name]" }`
-        *   **Description:** The print job was successfully submitted to the OS printing system for the specified printer. **Note:** This usually means the job was *queued*, not necessarily that it physically printed without error.
-    *   **`400 Bad Request`**:
-        *   **Content:** `application/json`
-        *   **Body:** `{ "detail": "Invalid payload: Missing required field 'pdfData'" }` or `{ "detail": "Invalid Base64 encoding for pdfData" }` or similar validation error.
-        *   **Description:** The request body was malformed or missing required fields.
-    *   **`404 Not Found`**:
-        *   **Content:** `application/json`
-        *   **Body:** `{ "detail": "Printer not found: [Printer Name]" }`
-        *   **Description:** The specified `printerName` does not match any printer known to the system or accessible by the service.
-    *   **`500 Internal Server Error`**:
-        *   **Content:** `application/json`
-        *   **Body:** `{ "detail": "Error message describing the printing failure" }`
-        *   **Description:** An error occurred during the printing process on the server (e.g., communication error with the printer spooler, invalid PDF data *after* decoding, permission issues).
-
-### 4. Notify Status (Optional - Python -> Separate Service)
-
-*   **Endpoint:** `http://localhost:9002/api/print-status` (Example: Separate Next.js instance if *not* serving frontend from Flask)
-*   **Method:** `POST`
-*   **Purpose:** Allows the Python application to send the final status (success/failure) of a print job back to *another* application (e.g., if Next.js were running independently). **This is generally NOT used when Flask serves the Next.js frontend**, as feedback mechanisms would typically be handled differently (e.g., polling, WebSockets if implemented).
-*   **Request Body:** (See `docs/api/print-status.md` for the schema expected by the *other* Next.js app)
-    ```json
-    {
-      "jobId": "optional-job-id", // Optional
-      "status": "success", // or "error"
-      "message": "Printed successfully.", // Optional
-      "printerName": "My Label Printer ZT410" // Optional
-    }
-    ```
-
-## Security Considerations
-
-*   **CORS:** CORS is handled by Flask (`Flask-Cors`) for the `/api/*` routes. Since the frontend is served from the same origin (`http://localhost:5001`), CORS is generally not an issue for frontend-backend communication within this setup.
-*   **Network Access:** The Flask application listens on a specific host and port (e.g., `127.0.0.1:5001` locally, `0.0.0.0:5001` in Docker). Ensure firewalls allow access to this port if accessing from other machines (relevant for Docker deployments).
-*   **Authentication:** No authentication is implemented by default. For production or shared environments, consider adding API key checks or other authentication mechanisms to the `/api/*` endpoints.
-*   **File System Access:** The application needs read access to the Next.js build output (`out/`) and potentially write access to temporary directories (`tempfile`). Ensure appropriate permissions.
-*   **Printing Permissions:** The user account running the Python Flask process needs permission to access and print to the selected system printers. This can be a consideration in restricted environments or when running as a different user/service.

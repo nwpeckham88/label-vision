@@ -9,3 +9,6 @@ gunicorn>=20.0 # For running Flask app in production/Docker
 # The app will try to use the correct one based on the OS.
 pywin32; platform_system == "Windows"
 pycups; platform_system == "Linux" or platform_system == "Darwin"
+
+google-generativeai
+Pillow>=9.0 # For image validation in the backend

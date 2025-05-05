@@ -1,23 +1,24 @@
 'use client';
 
-import type { FC } from 'react';
-import { useState, useCallback, useTransition, useMemo, useEffect } from 'react';
-import { identifyItemsFromPhoto } from '@/ai/flows/identify-items-from-photo';
-import { generateSummaryFromItems } from '@/ai/flows/generate-label-from-items';
-import { PhotoUploader } from '@/components/photo-uploader';
 import { ItemList } from '@/components/item-list';
+import { LabelDimensionsForm } from '@/components/label-dimensions-form'; // Add this import
 import { LabelPreview } from '@/components/label-preview';
-import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
+import { PhotoUploader } from '@/components/photo-uploader';
+import { PrintControls } from '@/components/print-controls';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useToast } from '@/hooks/use-toast';
-import { Wand2, AlertTriangle, Upload, Package, Ruler, Wifi, WifiOff, ServerCrash } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { LabelDimensions } from '@/services/label-printer'; // Use LabelDimensions
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { capitalizeWords } from '@/lib/utils';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from '@/components/ui/separator';
+import { Toaster } from '@/components/ui/toaster';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'; // Import Tooltip components
+import { useToast } from '@/hooks/use-toast';
+import { capitalizeWords } from '@/lib/utils';
+import type { LabelDimensions } from '@/services/label-printer'; // Use LabelDimensions
+import { generatePdf, LabelContent } from '@/services/label-printer';
+import { AlertTriangle, Ruler, ServerCrash, Upload, Wand2, Wifi, WifiOff } from 'lucide-react';
+import type { FC } from 'react';
+import { useCallback, useEffect, useState, useTransition } from 'react';
 
 // Python Desktop App API URLs (Now relative paths)
 const PYTHON_API_BASE_URL = '/api'; // Base path for API calls served by Flask
@@ -37,22 +38,34 @@ const DEFAULT_LABEL_SIZE_KEY = 'small';
 
 type ApiStatus = 'pending' | 'healthy' | 'unhealthy';
 
+// Define types for the API response and potential errors
+interface ProcessImageResponse {
+  identifiedItems: string[];
+  summary: string;
+}
+
+interface ApiError {
+  detail: string;
+}
+
 const LabelVisionPage: FC = () => {
   const [photoDataUri, setPhotoDataUri] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null); // Store the File object if needed later
   const [identifiedItems, setIdentifiedItems] = useState<string[]>([]);
-  const [summary, setSummary] = useState<string | null>(null);
+  const [labelSummary, setLabelSummary] = useState<string>('');
   const [selectedLabelSizeKey, setSelectedLabelSizeKey] = useState<string>(DEFAULT_LABEL_SIZE_KEY);
   const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('pending');
   const [error, setError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false); // Loading state for AI processing
+  const [processingError, setProcessingError] = useState<string | null>(null); // Error state
+  const [currentDimensions, setCurrentDimensions] = useState<LabelDimensions>(LABEL_SIZES[DEFAULT_LABEL_SIZE_KEY]); // Add state for dimensions
 
   const [isIdentifying, startIdentifyingTransition] = useTransition();
   const [isGeneratingSummary, startGeneratingSummaryTransition] = useTransition();
 
   const { toast } = useToast();
-
-  const selectedDimensions = useMemo(() => LABEL_SIZES[selectedLabelSizeKey], [selectedLabelSizeKey]);
 
   // --- API Health Check ---
   const checkApiHealth = useCallback(async () => {
@@ -124,82 +137,150 @@ const LabelVisionPage: FC = () => {
     fetchPrinters();
   }, [apiStatus, toast, selectedPrinter]); // Re-fetch when API status becomes healthy or selectedPrinter changes (to reset)
 
-  const handlePhotoUpload = useCallback((dataUri: string) => {
+  const handlePhotoUploaded = useCallback(async (dataUri: string, file: File) => {
     setPhotoDataUri(dataUri);
-    setIdentifiedItems([]);
-    setSummary(null);
-    setError(null);
-  }, []);
+    setUploadedFile(file);
+    setIdentifiedItems([]); // Clear previous results
+    setLabelSummary('');
+    setProcessingError(null);
+    setIsProcessing(true); // Start loading indicator
 
-  const handlePhotoClear = useCallback(() => {
-    setPhotoDataUri(null);
-    setIdentifiedItems([]);
-    setSummary(null);
-    setError(null);
-  }, []);
+    console.log("Photo uploaded, calling API...");
 
-  const handleGenerateOrRegenerateSummary = useCallback(async (itemsToSummarize: string[]) => {
-    if (itemsToSummarize.length === 0) {
-      setSummary('Empty');
-      return;
-    }
-    setError(null);
-    setSummary(null);
-    startGeneratingSummaryTransition(async () => {
-      try {
-        const capitalizedItems = itemsToSummarize.map(capitalizeWords);
-        const result = await generateSummaryFromItems({ items: capitalizedItems });
-        setSummary(result.summary);
-        toast({ title: 'Summary Generated', description: 'Label summary created.' });
-      } catch (err) {
-        console.error('Summary generation error:', err);
-        setError('Failed to generate summary. Please try again.');
-        toast({ title: 'Error', description: 'Summary generation failed.', variant: 'destructive' });
-        setSummary(null);
+    try {
+      const response = await fetch('/api/process-image-for-label', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        // Remove data URI prefix (e.g., "data:image/jpeg;base64,") before sending
+        body: JSON.stringify({ imageData: dataUri.split(',')[1] }),
+      });
+
+      if (!response.ok) {
+        let errorDetail = `HTTP error! status: ${response.status}`;
+        try {
+           const errorJson = await response.json() as ApiError;
+           errorDetail = errorJson.detail || errorDetail;
+        } catch (e) {
+            // Ignore if response is not JSON or parsing fails
+             console.error("Could not parse error response:", e);
+        }
+        throw new Error(errorDetail);
       }
-    });
+
+      const result = await response.json() as ProcessImageResponse;
+      console.log("API Response:", result);
+      setIdentifiedItems(result.identifiedItems || []);
+      setLabelSummary(result.summary || 'Error: No summary received');
+      toast({
+         title: "Analysis Complete",
+         description: `Found ${result.identifiedItems?.length || 0} items. Summary: "${result.summary}"`,
+      });
+
+    } catch (error) {
+       console.error("Error processing image:", error);
+       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+       setProcessingError(errorMessage);
+       toast({
+         variant: 'destructive',
+         title: 'Image Processing Failed',
+         description: errorMessage,
+       });
+        // Clear results on error
+        setIdentifiedItems([]);
+        setLabelSummary('');
+    } finally {
+      setIsProcessing(false); // Stop loading indicator
+    }
   }, [toast]);
 
-  const handleIdentifyItems = useCallback(async () => {
-    if (!photoDataUri) {
-      setError('Please upload a photo first.');
-      return;
-    }
-    setError(null);
+  const handlePhotoCleared = useCallback(() => {
+    setPhotoDataUri(null);
+    setUploadedFile(null);
     setIdentifiedItems([]);
-    setSummary(null);
-
-    startIdentifyingTransition(async () => {
-      try {
-        const result = await identifyItemsFromPhoto({ photoDataUri });
-        const rawItems = result.items || [];
-        const newItems = rawItems.map(capitalizeWords);
-        setIdentifiedItems(newItems);
-
-        if (newItems.length > 0) {
-          toast({ title: 'Identification Complete', description: `${newItems.length} item(s) identified. Generating summary...` });
-          handleGenerateOrRegenerateSummary(newItems);
-        } else {
-          toast({ title: 'Identification Complete', description: 'No items were identified in the photo.' });
-          setSummary('Empty');
-        }
-      } catch (err) {
-        console.error('Identification error:', err);
-        setError('Failed to identify items. Please try again.');
-        toast({ title: 'Error', description: 'Item identification failed.', variant: 'destructive' });
-        setIdentifiedItems([]);
-        setSummary(null);
-      }
-    });
-  }, [photoDataUri, toast, handleGenerateOrRegenerateSummary]);
+    setLabelSummary('');
+    setProcessingError(null);
+    setIsProcessing(false);
+    console.log("Photo cleared.");
+  }, []);
 
   const handleLabelSizeChange = (value: string) => {
     setSelectedLabelSizeKey(value);
+    setCurrentDimensions(LABEL_SIZES[value]); // Update dimensions state from selection
   };
 
   const handlePrinterChange = (value: string) => {
     setSelectedPrinter(value);
   };
+
+  const handlePrint = useCallback(async (printerName: string) => {
+    if (!photoDataUri || identifiedItems.length === 0 || !labelSummary) {
+      toast({
+        variant: 'destructive',
+        title: 'Cannot Print',
+        description: 'Please upload a photo and ensure items are identified first.',
+      });
+      return;
+    }
+
+    console.log(`Generating PDF for printer: ${printerName}`);
+    toast({ title: 'Generating PDF...' });
+
+    try {
+       const labelContent: LabelContent = {
+         summary: labelSummary,
+         items: identifiedItems,
+         // Pass the original (potentially higher res) data URI for PDF generation
+         // Consider adding image pre-processing (resize/grayscale) here or before
+         // calling generatePdf if needed for specific printers/performance.
+         imageDataUri: photoDataUri,
+         formatting: {
+           fontFamily: 'Helvetica',
+           textAlign: 'left',
+         },
+       };
+
+       const pdfBytes = await generatePdf(currentDimensions, labelContent);
+       const pdfBase64 = Buffer.from(pdfBytes).toString('base64'); // Use Buffer for Node.js/browser compatibility
+
+       console.log(`PDF generated (${pdfBytes.length} bytes), sending to print API...`);
+       toast({ title: 'Sending to printer...' });
+
+      const response = await fetch('/api/print', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          pdfData: pdfBase64,
+          printerName: printerName,
+          labelSummary: labelSummary // Send summary for job name
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.detail || `HTTP error! status: ${response.status}`);
+      }
+
+      console.log("Print API Response:", result);
+      toast({
+        title: 'Print Job Sent',
+        description: result.message || `Successfully sent to ${printerName}.`,
+      });
+
+    } catch (error) {
+      console.error("Error generating PDF or printing:", error);
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+       toast({
+         variant: 'destructive',
+         title: 'Printing Failed',
+         description: errorMessage,
+       });
+    }
+  }, [photoDataUri, identifiedItems, labelSummary, currentDimensions, toast]);
 
   const getApiStatusIcon = () => {
     switch (apiStatus) {
@@ -227,7 +308,7 @@ const LabelVisionPage: FC = () => {
 
 
   const isLoading = isIdentifying || isGeneratingSummary;
-  const canGenerate = !isLoading && identifiedItems.length > 0 && summary !== null && summary !== 'Empty';
+  const canGenerate = !isLoading && identifiedItems.length > 0 && labelSummary !== null && labelSummary !== 'Empty';
   const canPrint = canGenerate && selectedPrinter && apiStatus === 'healthy';
 
 
@@ -275,19 +356,10 @@ const LabelVisionPage: FC = () => {
               </CardHeader>
               <CardContent>
                 <PhotoUploader
-                  onPhotoUploaded={handlePhotoUpload}
-                  onPhotoCleared={handlePhotoClear}
-                  disabled={isLoading}
+                  onPhotoUploaded={handlePhotoUploaded}
+                  onPhotoCleared={handlePhotoCleared}
+                  disabled={isProcessing} // Disable uploader while processing
                 />
-                <Button
-                  onClick={handleIdentifyItems}
-                  disabled={!photoDataUri || isLoading}
-                  className="w-full mt-4"
-                  aria-label="Identify Items and Generate Summary"
-                >
-                  <Wand2 className="mr-2" />
-                  {isIdentifying ? 'Identifying...' : (isGeneratingSummary ? 'Generating Summary...' : 'Identify & Summarize')}
-                </Button>
               </CardContent>
             </Card>
 
@@ -304,7 +376,7 @@ const LabelVisionPage: FC = () => {
                   <Select
                     value={selectedLabelSizeKey}
                     onValueChange={handleLabelSizeChange}
-                    disabled={isLoading}
+                    disabled={isProcessing}
                     name="label-size"
                     required
                   >
@@ -325,7 +397,7 @@ const LabelVisionPage: FC = () => {
                   <Select
                     value={selectedPrinter ?? ''}
                     onValueChange={handlePrinterChange}
-                    disabled={isLoading || apiStatus !== 'healthy' || availablePrinters.length === 0}
+                    disabled={isProcessing || apiStatus !== 'healthy' || availablePrinters.length === 0}
                     name="printer-select"
                     required
                   >
@@ -354,6 +426,16 @@ const LabelVisionPage: FC = () => {
                 </div>
               </CardContent>
             </Card>
+
+            <LabelDimensionsForm
+               initialDimensions={currentDimensions}
+               onDimensionsChange={(newDimensions) => {
+                 setCurrentDimensions(newDimensions);
+               }}
+               disabled={isProcessing}
+            />
+
+            <PrintControls onPrint={handlePrint} disabled={!photoDataUri || identifiedItems.length === 0 || isProcessing}/>
           </div>
 
           {/* Column 2: Identify */}
@@ -364,16 +446,12 @@ const LabelVisionPage: FC = () => {
           {/* Column 3: Generate & Print */}
           <div className="flex flex-col gap-6 md:order-3">
             <LabelPreview
-              summary={summary}
+              dimensions={currentDimensions}
+              summary={labelSummary}
               items={identifiedItems}
-              dimensions={selectedDimensions} // Pass only dimensions
-              selectedPrinter={selectedPrinter} // Pass selected printer
-              apiStatus={apiStatus} // Pass API status
-              isGeneratingSummary={isGeneratingSummary}
-              canGenerate={canGenerate}
-              onRegenerateSummary={() => handleGenerateOrRegenerateSummary(identifiedItems)}
-              photoDataUri={photoDataUri}
-              pythonApiUrl={PYTHON_API_BASE_URL} // Pass relative base URL
+              imageDataUri={photoDataUri}
+              isProcessing={isProcessing}
+              processingError={processingError}
             />
           </div>
         </main>
@@ -383,8 +461,16 @@ const LabelVisionPage: FC = () => {
           Powered by Firebase Studio & Genkit
         </footer>
       </div>
+      <Toaster />
     </TooltipProvider>
   );
 };
 
 export default LabelVisionPage;
+
+// Helper Buffer shim for browser environments if needed,
+// otherwise rely on Node.js Buffer if running in a Node context.
+// Usually Next.js handles this, but good practice if unsure.
+if (typeof Buffer === 'undefined') {
+   globalThis.Buffer = require('buffer/').Buffer;
+}
