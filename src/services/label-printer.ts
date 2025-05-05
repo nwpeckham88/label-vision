@@ -1,48 +1,42 @@
-
 import { PDFDocument, rgb, StandardFonts, PageSizes, PDFFont, degrees } from 'pdf-lib';
 
 /**
- * Represents the configuration for a label printer.
- * Although printing is external, dimensions are needed for PDF generation.
+ * Represents the dimensions for a label.
  */
-export interface PrinterConfig {
-  printerName: string; // Might still be useful to pass to the Python app
-  labelWidthInches: number;
-  labelHeightInches: number;
+export interface LabelDimensions {
+    labelWidthInches: number;
+    labelHeightInches: number;
 }
 
 /**
  * Represents formatting options for the label.
  */
 export interface LabelFormattingOptions {
-  fontFamily?: 'Helvetica' | 'Times-Roman' | 'Courier';
-  textAlign?: 'left' | 'center' | 'right';
+    fontFamily?: 'Helvetica' | 'Times-Roman' | 'Courier';
+    textAlign?: 'left' | 'center' | 'right';
 }
 
 /**
  * Represents the structured content and formatting of a label.
  */
 export interface LabelContent {
-  summary: string;
-  items: string[];
-  formatting?: LabelFormattingOptions;
-  imageDataUri?: string | null; // Optional: Pre-processed (resized, grayscale) image data URI
+    summary: string;
+    items: string[];
+    formatting?: LabelFormattingOptions;
+    imageDataUri?: string | null; // Optional: Pre-processed (resized, grayscale) image data URI
 }
 
 const DPI = 72; // PDF points per inch
 
-// Removed the printLabel function as it's handled externally.
-// export async function printLabel(printerConfig: PrinterConfig, labelContent: LabelContent): Promise<void> { ... }
-
 /**
  * Asynchronously generates a PDF document for the specified label using pdf-lib.
  *
- * @param printerConfig The configuration for the printer (used for dimensions).
+ * @param dimensions The dimensions for the label.
  * @param labelContent The structured label content and formatting options, potentially including an image.
  * @returns A promise that resolves with a PDF document as a byte array.
  */
-export async function generatePdf(printerConfig: PrinterConfig, labelContent: LabelContent): Promise<Uint8Array> {
-    const { labelWidthInches, labelHeightInches } = printerConfig;
+export async function generatePdf(dimensions: LabelDimensions, labelContent: LabelContent): Promise<Uint8Array> {
+    const { labelWidthInches, labelHeightInches } = dimensions;
     const { summary, items, imageDataUri } = labelContent;
     const { fontFamily = 'Helvetica', textAlign = 'left' } = labelContent.formatting || {};
 
