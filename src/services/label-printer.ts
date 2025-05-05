@@ -155,14 +155,15 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
     const maxItemFontSize = 14;
     const minItemFontSize = 6;
 
-    if (items.length > 0 && availableHeightForItems > 0) {
-        let optimalFontSize = minItemFontSize;
-        let optimalColumns = 1;
+    let optimalFontSize = minItemFontSize;
+    let optimalColumns = 1;
 
+    if (items.length > 0 && availableHeightForItems > 0) {
         // Find the best font size and column count that fits the items
+        findOptimalFit: // Label for the outer loop
         for (let fontSize = maxItemFontSize; fontSize >= minItemFontSize; fontSize--) {
-            const itemTextHeight = pdfBaseFont.heightAtSize(fontSize);
-            const totalLineHeight = itemTextHeight + itemSpacing;
+            const currentItemTextHeight = pdfBaseFont.heightAtSize(fontSize);
+            const totalLineHeight = currentItemTextHeight + itemSpacing;
 
             for (let numCols = 3; numCols >= 1; numCols--) { // Prioritize more columns if they fit
                 const colWidth = (contentWidth - (numCols - 1) * margin) / numCols; // Adjust for gaps
@@ -175,12 +176,10 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
                 if (requiredHeight <= availableHeightForItems && itemsFitWidth) {
                     optimalFontSize = fontSize;
                     optimalColumns = numCols;
-                    gotoDrawItems; // Found a good fit, exit loops
+                    break findOptimalFit; // Found a good fit, exit both loops
                 }
             }
         }
-
-        gotoDrawItems:
 
         // --- Draw Items ---
         const itemTextHeight = pdfBaseFont.heightAtSize(optimalFontSize);
@@ -204,21 +203,26 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
                     itemX = colStartX + colWidth - itemTextWidth;
                 }
 
+                // Safety check for Y position before drawing
+                if (currentY < margin) {
+                    console.warn("Stopping item drawing, potential overflow for:", item);
+                    break; // Stop drawing in this column if we run out of space
+                }
+
                 page.drawText(item, {
                     x: itemX,
                     y: currentY,
                     font: pdfBaseFont,
                     size: optimalFontSize,
                     color: rgb(0, 0, 0),
-                    maxWidth: colWidth, // Ensure text wraps within the column
-                    lineHeight: totalLineHeight, // Use calculated line height
+                    maxWidth: colWidth, // Ensure text wraps within the column (though ideally pre-checked)
+                    // lineHeight: totalLineHeight, // pdf-lib calculates line height based on font size
                     wordBreaks: [' '], // Basic word breaking
                 });
 
                 currentY -= totalLineHeight; // Move down for the next item
-                if (currentY < margin) break; // Stop if exceeding page bounds (safety)
             }
-            if (itemIndex >= items.length) break; // All items drawn
+             if (itemIndex >= items.length || currentY < margin) break; // All items drawn or ran out of space
         }
     }
 
