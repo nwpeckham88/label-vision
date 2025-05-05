@@ -1,0 +1,10 @@
+Flask>=2.0
+Flask-Cors>=3.0
+requests>=2.20 # For sending status back to Next.js (optional)
+
+# Platform-specific printing libraries:
+# Install pywin32 manually on Windows if needed: pip install pywin32
+# Install pycups on Linux/macOS if needed: pip install pycups
+# The app will try to use the correct one based on the OS.
+pywin32; platform_system == "Windows"
+pycups; platform_system == "Linux" or platform_system == "Darwin"
