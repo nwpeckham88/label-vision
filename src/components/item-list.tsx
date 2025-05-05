@@ -11,15 +11,16 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 interface ItemListProps {
   items: string[];
   isLoading: boolean;
+  title?: string; // Optional title prop
 }
 
-export function ItemList({ items, isLoading }: ItemListProps) {
+export function ItemList({ items, isLoading, title = "Identified Items" }: ItemListProps) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-lg font-semibold flex items-center gap-2">
           <Package className="h-5 w-5" />
-          Identified Items
+          {title} {/* Use the title prop */}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -39,7 +40,7 @@ export function ItemList({ items, isLoading }: ItemListProps) {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No items identified yet. Upload a photo first.
+            No items identified yet. Upload a photo and click "Identify & Summarize".
           </p>
         )}
       </CardContent>

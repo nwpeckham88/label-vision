@@ -2,101 +2,96 @@
 'use client';
 
 import type * as React from 'react';
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { Printer, FileText, Loader2, Minus, Plus, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback, useTransition } from 'react';
+import { Printer, FileText, Loader2, RefreshCw, Settings2, Pilcrow, AlignLeft, AlignCenter, AlignRight, CaseSensitive } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import type { PrinterConfig, LabelContent } from '@/services/label-printer';
+import type { PrinterConfig, LabelContent, LabelFormattingOptions } from '@/services/label-printer';
 import { printLabel, generatePdf } from '@/services/label-printer';
-import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 
 interface LabelPreviewProps {
   summary: string | null;
   items: string[];
   config: PrinterConfig;
-  isGenerating: boolean; // True when AI is generating summary
+  isGeneratingSummary: boolean; // True when AI is generating summary
   canGenerate: boolean; // True when items are identified and summary is ready
+  onRegenerateSummary: (items: string[]) => void; // Callback to trigger summary regeneration
 }
 
-// Convert inches to pixels (assuming 96 DPI)
-const INCH_TO_PX = 96;
-const MIN_FONT_SIZE_PX = 8;
-const MAX_FONT_SIZE_PX = 48;
-const FONT_SIZE_STEP_PX = 1;
-const FONT_ASPECT_RATIO = 0.5; // Approx width-to-height ratio for typical fonts
-
-// Function to estimate text width
-function estimateTextWidth(text: string, fontSizePx: number): number {
-  return text.length * fontSizePx * FONT_ASPECT_RATIO;
-}
-
-export function LabelPreview({ summary, items, config, isGenerating, canGenerate }: LabelPreviewProps) {
+export function LabelPreview({
+  summary,
+  items,
+  config,
+  isGeneratingSummary,
+  canGenerate,
+  onRegenerateSummary,
+}: LabelPreviewProps) {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [formattingOptions, setFormattingOptions] = useState<LabelFormattingOptions>({
+      fontFamily: 'Helvetica',
+      textAlign: 'left',
+  });
   const { toast } = useToast();
-  const [fontSize, setFontSize] = useState<number>(12); // Base font size for item list
-  const previewRef = useRef<HTMLDivElement>(null);
+  const [pdfGenerationKey, setPdfGenerationKey] = useState(0); // Key to force iframe reload
+  const [isGeneratingPreview, startPreviewTransition] = useTransition();
 
+  const isLoading = isGeneratingSummary || isPrinting || isGeneratingPdf || isGeneratingPreview;
+  const labelAspectRatio = useMemo(() => config.labelWidthInches / config.labelHeightInches, [config]);
 
-  const labelWidthPx = useMemo(() => config.labelWidthInches * INCH_TO_PX, [config.labelWidthInches]);
-  const labelHeightPx = useMemo(() => config.labelHeightInches * INCH_TO_PX, [config.labelHeightInches]);
-
-  // Calculate optimal font size and column count
+  // Generate PDF preview whenever relevant props change
   useEffect(() => {
-    if (!previewRef.current || items.length === 0 || !canGenerate || !summary) {
-        // Reset font size if no content or not ready
-        setFontSize(12);
-        return;
-    }
+    let objectUrl: string | null = null;
 
-    const container = previewRef.current;
-    const availableHeight = container.clientHeight - (MIN_FONT_SIZE_PX * 1.5 + 10 + 2); // Subtract approx header height, padding, separator
-    const availableWidth = container.clientWidth - 10; // Subtract padding
-
-    let bestFontSize = MIN_FONT_SIZE_PX;
-    let bestCols = 1;
-
-    // Try increasing font size
-    for (let currentSize = MIN_FONT_SIZE_PX; currentSize <= MAX_FONT_SIZE_PX; currentSize += FONT_SIZE_STEP_PX) {
-        const lineHeight = currentSize * 1.4; // Approximate line height
-
-        // Try different column counts for the current font size
-        for (let numCols = 1; numCols <= 3; numCols++) { // Limit to max 3 columns for simplicity
-             const colWidth = (availableWidth - (numCols - 1) * 10) / numCols; // Subtract gap between columns
-             const itemsPerCol = Math.ceil(items.length / numCols);
-             const requiredHeight = itemsPerCol * lineHeight;
-
-             // Check if all items fit within column width and container height
-             const allItemsFitWidth = items.every(item => estimateTextWidth(item, currentSize) <= colWidth);
-
-             if (requiredHeight <= availableHeight && allItemsFitWidth) {
-                 // This configuration fits, potentially update best fit
-                if (currentSize > bestFontSize) {
-                   bestFontSize = currentSize;
-                   bestCols = numCols;
-                }
-             } else if (numCols === 1 && !allItemsFitWidth) {
-                 // If items don't even fit in one column, break inner loop early for this font size
-                 break;
-             }
+    const generatePreview = async () => {
+      if (canGenerate && summary && items.length > 0) {
+        try {
+          const labelContent: LabelContent = { summary, items, formatting: formattingOptions };
+          const pdfBytes = await generatePdf(config, labelContent);
+          const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+          objectUrl = URL.createObjectURL(blob);
+          setPdfPreviewUrl(objectUrl);
+          setPdfGenerationKey(prev => prev + 1); // Update key to force iframe refresh
+        } catch (error) {
+          console.error('Preview PDF generation failed:', error);
+          setPdfPreviewUrl(null); // Clear preview on error
+          toast({ title: 'Error', description: 'Failed to generate PDF preview.', variant: 'destructive' });
         }
-        // If no column configuration worked for this font size, stop increasing font size
-         if (bestFontSize < currentSize) {
-             break;
-         }
+      } else {
+        setPdfPreviewUrl(null); // Clear preview if not ready
+      }
+    };
+
+     // Debounce PDF generation slightly to avoid excessive regeneration during rapid changes
+    const timeoutId = setTimeout(() => {
+       startPreviewTransition(generatePreview);
+    }, 300); // 300ms debounce
+
+    // Cleanup function to revoke the object URL
+    return () => {
+       clearTimeout(timeoutId);
+       if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+       }
+    };
+  }, [summary, items, config, canGenerate, formattingOptions, toast]); // Regenerate on these changes
+
+
+  const handleRegenerateClick = useCallback(() => {
+    if (items.length > 0) {
+      onRegenerateSummary(items);
     }
-
-    setFontSize(bestFontSize);
-    // Note: We are calculating bestCols but not explicitly using it to set CSS columns yet,
-    // as text wrapping within the available width will handle layout reasonably well.
-    // A more complex implementation could use `column-count`.
-
-  }, [summary, items, labelWidthPx, labelHeightPx, canGenerate]);
+  }, [items, onRegenerateSummary]);
 
   const handlePrint = async () => {
     if (!canGenerate || !summary) {
@@ -104,8 +99,9 @@ export function LabelPreview({ summary, items, config, isGenerating, canGenerate
        return;
     }
     setIsPrinting(true);
-    const labelContent: LabelContent = { summary, items, fontSize };
+    const labelContent: LabelContent = { summary, items, formatting: formattingOptions };
     try {
+      // Consider directly printing the generated PDF blob if possible
       await printLabel(config, labelContent);
       toast({ title: 'Success', description: 'Label sent to printer.' });
     } catch (error) {
@@ -116,112 +112,170 @@ export function LabelPreview({ summary, items, config, isGenerating, canGenerate
     }
   };
 
-  const handleGeneratePdf = async () => {
+   const handleDownloadPdf = async () => {
      if (!canGenerate || !summary) {
-       toast({ title: 'Error', description: 'Cannot generate PDF without summary and items.', variant: 'destructive' });
+       toast({ title: 'Error', description: 'Cannot download PDF without summary and items.', variant: 'destructive' });
        return;
     }
+    // Re-generate PDF for download to ensure it's the latest version
     setIsGeneratingPdf(true);
-    const labelContent: LabelContent = { summary, items, fontSize };
+    const labelContent: LabelContent = { summary, items, formatting: formattingOptions };
     try {
       const pdfBytes = await generatePdf(config, labelContent);
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'label.pdf';
+      link.download = `label-${summary?.toLowerCase().replace(/\s+/g, '-') || 'generated'}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(link.href);
-      toast({ title: 'Success', description: 'PDF generated successfully.' });
+      URL.revokeObjectURL(link.href); // Clean up URL object
+      toast({ title: 'Success', description: 'PDF downloaded successfully.' });
     } catch (error) {
-      console.error('PDF generation failed:', error);
-      toast({ title: 'Error', description: 'Failed to generate PDF.', variant: 'destructive' });
+      console.error('PDF download failed:', error);
+      toast({ title: 'Error', description: 'Failed to download PDF.', variant: 'destructive' });
     } finally {
       setIsGeneratingPdf(false);
     }
   };
 
-  const isLoading = isGenerating || isPrinting || isGeneratingPdf;
+  const handleFormattingChange = <K extends keyof LabelFormattingOptions>(
+    key: K,
+    value: LabelFormattingOptions[K]
+  ) => {
+    setFormattingOptions(prev => ({ ...prev, [key]: value }));
+  };
+
 
   return (
     <Card className="flex flex-col h-full">
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-lg font-semibold flex items-center gap-2">
           <FileText className="h-5 w-5" />
-          Label Preview
+          Label Preview & Actions
         </CardTitle>
+         <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon" disabled={isLoading} aria-label="Formatting Options">
+              <Settings2 className="h-5 w-5" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-64 p-4 space-y-4">
+             <div className="space-y-2">
+                <Label htmlFor="font-family" className="text-sm font-medium">Font Family</Label>
+                 <Select
+                    value={formattingOptions.fontFamily}
+                    onValueChange={(value) => handleFormattingChange('fontFamily', value as typeof formattingOptions.fontFamily)}
+                 >
+                    <SelectTrigger id="font-family" className="w-full">
+                        <SelectValue placeholder="Select font" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="Helvetica">Helvetica (Sans-Serif)</SelectItem>
+                        <SelectItem value="Times-Roman">Times New Roman (Serif)</SelectItem>
+                        <SelectItem value="Courier">Courier (Monospace)</SelectItem>
+                    </SelectContent>
+                 </Select>
+             </div>
+              <div className="space-y-2">
+                 <Label className="text-sm font-medium">Text Alignment</Label>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    value={formattingOptions.textAlign}
+                    onValueChange={(value) => {
+                        if (value) handleFormattingChange('textAlign', value as typeof formattingOptions.textAlign)
+                    }}
+                    className="flex justify-around"
+                    aria-label="Text alignment"
+                 >
+                    <ToggleGroupItem value="left" aria-label="Left align">
+                      <AlignLeft className="h-4 w-4" />
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="center" aria-label="Center align">
+                      <AlignCenter className="h-4 w-4" />
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="right" aria-label="Right align">
+                       <AlignRight className="h-4 w-4" />
+                    </ToggleGroupItem>
+                 </ToggleGroup>
+              </div>
+          </PopoverContent>
+        </Popover>
       </CardHeader>
-      <CardContent className="flex-grow flex flex-col p-2">
-        {isGenerating ? (
-          <div className="flex-grow flex items-center justify-center">
-            <Skeleton className="w-full h-3/4" />
-          </div>
-        ) : canGenerate && summary && items.length > 0 ? (
-          <div
-            ref={previewRef}
-            className="border rounded-md p-2 flex-grow overflow-hidden bg-white text-black flex flex-col" // Simulate label background, ensure black text for preview
-            style={{
-              width: `${labelWidthPx * 0.8}px`, // Scale down preview slightly for better fit
-              height: `${labelHeightPx * 0.8}px`, // Scale down preview slightly
-              maxWidth: '100%',
-              maxHeight: '400px', // Max preview height
-              aspectRatio: `${config.labelWidthInches} / ${config.labelHeightInches}`,
-              margin: 'auto', // Center the preview box
-            }}
-          >
-            {/* Header */}
-            <div
-                className="text-center font-bold truncate"
-                style={{ fontSize: `${Math.min(MAX_FONT_SIZE_PX, Math.max(MIN_FONT_SIZE_PX, fontSize * 1.3))}px`, lineHeight: 1.2, marginBottom: '2px' }} // Larger, bold header
-            >
-                {summary}
-            </div>
-            <Separator className="bg-gray-400 my-1" />
-             {/* Item List */}
-            <div
-              className="flex-grow overflow-y-auto text-left" // Allow vertical scroll if needed
-              style={{ fontSize: `${fontSize}px`, lineHeight: 1.3 }} // Dynamically sized item list
-             >
-                <ul className="list-none p-0 m-0 flex flex-col flex-wrap max-h-full">
-                  {items.map((item, index) => (
-                    <li key={index} className="truncate leading-tight break-words">{item}</li>
-                  ))}
-                </ul>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-grow flex items-center justify-center text-muted-foreground text-sm">
-            {summary === 'Empty' ? 'No items identified to generate a label.' : 'Identify items first...'}
+      <CardContent className="flex-grow flex flex-col items-center justify-center p-2 bg-muted/20">
+        {isLoading && !pdfPreviewUrl && ( // Show skeleton only if loading and no preview exists yet
+          <div className="w-full h-full flex items-center justify-center">
+             <Skeleton className="w-[80%] h-[80%] max-w-xs max-h-60" style={{ aspectRatio: labelAspectRatio }}/>
           </div>
         )}
+        {!isLoading && !canGenerate && (
+           <div className="text-center text-muted-foreground text-sm p-4">
+             {summary === 'Empty' ? 'No items identified to generate a label.' : 'Identify items or generate summary first...'}
+          </div>
+        )}
+         {pdfPreviewUrl && (
+           <div className="relative w-full h-full max-w-md mx-auto" style={{ aspectRatio: labelAspectRatio }}>
+             {isGeneratingPreview && (
+                 <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10 rounded-md">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                 </div>
+             )}
+             <iframe
+                key={pdfGenerationKey} // Force re-render when key changes
+                src={pdfPreviewUrl}
+                title="Label Preview"
+                className={cn(
+                    "w-full h-full border rounded-md shadow-sm",
+                    isGeneratingPreview && "opacity-50" // Slightly dim while loading new preview
+                )}
+                style={{ contain: 'content' }} // Optimization hint
+             />
+           </div>
+         )}
       </CardContent>
-       <CardFooter className="flex justify-end gap-2 p-4 border-t">
-         <Button
-          variant="outline"
-          onClick={handleGeneratePdf}
-          disabled={!canGenerate || isLoading}
-          aria-label="Generate PDF"
-        >
-          {isGeneratingPdf ? (
-            <Loader2 className="animate-spin" />
-          ) : (
-            <FileText />
-          )}
-          <span className="ml-2">PDF</span>
-        </Button>
-        <Button
-          onClick={handlePrint}
-          disabled={!canGenerate || isLoading}
-          aria-label="Print Label"
-        >
-          {isPrinting ? (
-            <Loader2 className="animate-spin" />
-          ) : (
-            <Printer />
-          )}
-          <span className="ml-2">Print</span>
-        </Button>
+       <CardFooter className="flex flex-col sm:flex-row justify-between items-center gap-2 p-4 border-t">
+          <Button
+            variant="outline"
+            onClick={handleRegenerateClick}
+            disabled={isLoading || items.length === 0}
+            aria-label="Regenerate Summary"
+            className="w-full sm:w-auto"
+          >
+            {isGeneratingSummary ? (
+                <Loader2 className="animate-spin" />
+            ) : (
+                <RefreshCw />
+            )}
+            <span className="ml-2">Regenerate</span>
+          </Button>
+         <div className="flex gap-2 w-full sm:w-auto justify-end">
+            <Button
+                variant="outline"
+                onClick={handleDownloadPdf}
+                disabled={!canGenerate || isLoading}
+                aria-label="Download PDF"
+            >
+              {isGeneratingPdf ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <FileText />
+              )}
+              <span className="ml-2 hidden sm:inline">PDF</span>
+            </Button>
+            <Button
+              onClick={handlePrint}
+              disabled={!canGenerate || isLoading}
+              aria-label="Print Label"
+            >
+              {isPrinting ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Printer />
+              )}
+              <span className="ml-2 hidden sm:inline">Print</span>
+            </Button>
+         </div>
       </CardFooter>
     </Card>
   );
