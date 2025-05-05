@@ -1,1 +1,2 @@
-// Flows will be imported for their side effects in this file.
+import '@/ai/flows/generate-label-from-items.ts';
+import '@/ai/flows/identify-items-from-photo.ts';
