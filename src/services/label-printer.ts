@@ -1,5 +1,5 @@
 
-import { PDFDocument, rgb, StandardFonts, PageSizes, PDFFont } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PageSizes, PDFFont, degrees } from 'pdf-lib';
 
 /**
  * Represents the configuration for a label printer.
@@ -14,7 +14,7 @@ export interface PrinterConfig {
  * Represents formatting options for the label.
  */
 export interface LabelFormattingOptions {
-  fontFamily?: 'Helvetica' | 'Times-Roman' | 'Courier'; // Add more if needed
+  fontFamily?: 'Helvetica' | 'Times-Roman' | 'Courier';
   textAlign?: 'left' | 'center' | 'right';
 }
 
@@ -24,8 +24,8 @@ export interface LabelFormattingOptions {
 export interface LabelContent {
   summary: string;
   items: string[];
-  formatting?: LabelFormattingOptions; // Make formatting optional
-  // Removed fontSize, as pdf-lib will calculate optimal size
+  formatting?: LabelFormattingOptions;
+  imageDataUri?: string | null; // Optional: Pre-processed (resized, grayscale) image data URI
 }
 
 const DPI = 72; // PDF points per inch
@@ -40,7 +40,6 @@ const DPI = 72; // PDF points per inch
  */
 export async function printLabel(printerConfig: PrinterConfig, labelContent: LabelContent): Promise<void> {
   // TODO: Implement actual printing logic (e.g., using browser print API with the generated PDF)
-  // For now, we'll generate the PDF and log it. A real implementation might send this PDF to a printer API or use window.print().
   console.log(`--- Simulating Print ---`);
   console.log(`Printer: ${printerConfig.printerName}`);
   try {
@@ -56,11 +55,6 @@ export async function printLabel(printerConfig: PrinterConfig, labelContent: Lab
   }
   console.log(`----------------------`);
 
-  // Simulate potential error (less likely now as PDF generation handles layout)
-  // if (Math.random() > 0.95) {
-  //   throw new Error("Simulated printer connection error");
-  // }
-
   return Promise.resolve();
 }
 
@@ -68,12 +62,12 @@ export async function printLabel(printerConfig: PrinterConfig, labelContent: Lab
  * Asynchronously generates a PDF document for the specified label using pdf-lib.
  *
  * @param printerConfig The configuration for the printer (used for dimensions).
- * @param labelContent The structured label content and formatting options.
+ * @param labelContent The structured label content and formatting options, potentially including an image.
  * @returns A promise that resolves with a PDF document as a byte array.
  */
 export async function generatePdf(printerConfig: PrinterConfig, labelContent: LabelContent): Promise<Uint8Array> {
     const { labelWidthInches, labelHeightInches } = printerConfig;
-    const { summary, items } = labelContent;
+    const { summary, items, imageDataUri } = labelContent;
     const { fontFamily = 'Helvetica', textAlign = 'left' } = labelContent.formatting || {};
 
     const widthPt = labelWidthInches * DPI;
@@ -96,7 +90,6 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
             baseFont = StandardFonts.Courier;
             boldFont = StandardFonts.CourierBold;
             break;
-        // Add more cases if needed
     }
     const pdfBaseFont = await pdfDoc.embedFont(baseFont);
     const pdfBoldFont = await pdfDoc.embedFont(boldFont);
@@ -104,13 +97,14 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
 
     // --- Margins and Paddings ---
     const margin = 5; // Points
+    let currentY = height - margin; // Track current Y position from top
     const contentWidth = width - 2 * margin;
-    const contentHeight = height - 2 * margin;
     const headerBottomMargin = 4;
     const lineThickness = 0.5;
     const lineTopMargin = 2;
     const lineBottomMargin = 4;
     const itemSpacing = 1.5; // Vertical spacing between items
+    const imagePadding = 4; // Space around the image
 
     // --- Header (Summary) ---
     const maxHeaderFontSize = 24;
@@ -130,7 +124,7 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
     } else if (textAlign === 'right') {
         headerX = width - margin - headerTextWidth;
     }
-    const headerY = height - margin - headerTextHeight;
+    const headerY = currentY - headerTextHeight;
 
     page.drawText(summary, {
         x: headerX,
@@ -139,19 +133,54 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
         size: headerFontSize,
         color: rgb(0, 0, 0),
     });
+    currentY = headerY - headerBottomMargin; // Update Y position
 
     // --- Separator Line ---
-    const lineY = headerY - headerBottomMargin - lineTopMargin;
+    const lineY = currentY - lineTopMargin;
     page.drawLine({
         start: { x: margin, y: lineY },
         end: { x: width - margin, y: lineY },
         thickness: lineThickness,
         color: rgb(0.5, 0.5, 0.5), // Gray line
     });
+    currentY = lineY - lineBottomMargin; // Update Y position
+
+
+    // --- Image Handling (if provided) ---
+    let imageDims = { width: 0, height: 0 };
+    let embeddedImage: Awaited<ReturnType<typeof pdfDoc.embedPng | typeof pdfDoc.embedJpg>> | null = null;
+    let imageSectionHeight = 0;
+    const maxImageFraction = 0.3; // Max height fraction image can take
+
+    if (imageDataUri) {
+        try {
+            if (imageDataUri.startsWith('data:image/png')) {
+                 embeddedImage = await pdfDoc.embedPng(imageDataUri);
+            } else if (imageDataUri.startsWith('data:image/jpeg') || imageDataUri.startsWith('data:image/jpg')) {
+                 embeddedImage = await pdfDoc.embedJpg(imageDataUri);
+            } else {
+                console.warn("Unsupported image format for embedding:", imageDataUri.substring(0, 30));
+            }
+
+            if (embeddedImage) {
+                const maxAllowedImageHeight = (height - margin * 2) * maxImageFraction; // Max height relative to label height
+                const scale = Math.min(contentWidth / embeddedImage.width, maxAllowedImageHeight / embeddedImage.height, 1); // Don't scale up
+                imageDims = embeddedImage.scale(scale);
+                imageSectionHeight = imageDims.height + imagePadding * 2; // Reserve space for image + padding
+            }
+        } catch (e) {
+            console.error("Failed to embed image:", e);
+            embeddedImage = null; // Ensure it's null if embedding failed
+            imageDims = { width: 0, height: 0 };
+            imageSectionHeight = 0;
+        }
+    }
+
+    // --- Item List Area Calculation ---
+    const itemListStartY = currentY; // Top of the item list area
+    const availableHeightForItems = itemListStartY - margin - imageSectionHeight; // Subtract image height if present
 
     // --- Item List ---
-    const itemListStartY = lineY - lineBottomMargin;
-    const availableHeightForItems = itemListStartY - margin;
     const maxItemFontSize = 14;
     const minItemFontSize = 6;
 
@@ -160,23 +189,22 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
 
     if (items.length > 0 && availableHeightForItems > 0) {
         // Find the best font size and column count that fits the items
-        findOptimalFit: // Label for the outer loop
+        findOptimalFit:
         for (let fontSize = maxItemFontSize; fontSize >= minItemFontSize; fontSize--) {
             const currentItemTextHeight = pdfBaseFont.heightAtSize(fontSize);
             const totalLineHeight = currentItemTextHeight + itemSpacing;
 
-            for (let numCols = 3; numCols >= 1; numCols--) { // Prioritize more columns if they fit
-                const colWidth = (contentWidth - (numCols - 1) * margin) / numCols; // Adjust for gaps
+            for (let numCols = 3; numCols >= 1; numCols--) {
+                const colWidth = (contentWidth - (numCols - 1) * margin) / numCols;
                 const itemsPerCol = Math.ceil(items.length / numCols);
                 const requiredHeight = itemsPerCol * totalLineHeight;
 
-                // Check if text width fits in columns
                 const itemsFitWidth = items.every(item => pdfBaseFont.widthOfTextAtSize(item, fontSize) <= colWidth);
 
                 if (requiredHeight <= availableHeightForItems && itemsFitWidth) {
                     optimalFontSize = fontSize;
                     optimalColumns = numCols;
-                    break findOptimalFit; // Found a good fit, exit both loops
+                    break findOptimalFit;
                 }
             }
         }
@@ -189,7 +217,7 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
 
         let itemIndex = 0;
         for (let col = 0; col < optimalColumns; col++) {
-            let currentY = itemListStartY - itemTextHeight; // Start drawing from top of item area
+            let currentItemY = itemListStartY - itemTextHeight; // Start drawing from top of item area
             const colStartX = margin + col * (colWidth + margin);
 
             for (let row = 0; row < itemsPerCol && itemIndex < items.length; row++) {
@@ -203,27 +231,45 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
                     itemX = colStartX + colWidth - itemTextWidth;
                 }
 
-                // Safety check for Y position before drawing
-                if (currentY < margin) {
+                if (currentItemY < margin + imageSectionHeight) { // Check against bottom margin + potential image height
                     console.warn("Stopping item drawing, potential overflow for:", item);
-                    break; // Stop drawing in this column if we run out of space
+                    break;
                 }
 
                 page.drawText(item, {
                     x: itemX,
-                    y: currentY,
+                    y: currentItemY,
                     font: pdfBaseFont,
                     size: optimalFontSize,
                     color: rgb(0, 0, 0),
-                    maxWidth: colWidth, // Ensure text wraps within the column (though ideally pre-checked)
-                    // lineHeight: totalLineHeight, // pdf-lib calculates line height based on font size
-                    wordBreaks: [' '], // Basic word breaking
+                    maxWidth: colWidth,
+                    wordBreaks: [' '],
                 });
 
-                currentY -= totalLineHeight; // Move down for the next item
+                currentItemY -= totalLineHeight;
             }
-             if (itemIndex >= items.length || currentY < margin) break; // All items drawn or ran out of space
+             if (itemIndex >= items.length) break; // All items drawn
         }
+    } else if (items.length > 0) {
+         console.warn("Not enough vertical space for items, or no items.");
+    }
+
+
+    // --- Draw Image (if embedded) ---
+    if (embeddedImage && imageDims.width > 0 && imageDims.height > 0) {
+        const imageX = (width - imageDims.width) / 2; // Center image horizontally
+        const imageY = margin + imagePadding; // Place image at the bottom with padding
+
+        // Basic dithering simulation attempt (draw as grayscale)
+        // pdf-lib doesn't have direct dithering. We assume pre-processing handled it.
+        // Drawing with low opacity might simulate lighter printing, but not true dithering.
+         page.drawImage(embeddedImage, {
+             x: imageX,
+             y: imageY,
+             width: imageDims.width,
+             height: imageDims.height,
+             // opacity: 0.8, // Optional: slightly reduce opacity
+         });
     }
 
 
@@ -233,6 +279,11 @@ export async function generatePdf(printerConfig: PrinterConfig, labelContent: La
     console.log(`Size: ${labelWidthInches}" x ${labelHeightInches}"`);
     console.log(`Summary: ${summary} (Font: ${boldFont}, Size: ${headerFontSize.toFixed(1)}pt)`);
     console.log(`Items: ${items.length} (Font: ${baseFont}, Optimal Size: ${optimalFontSize.toFixed(1)}pt, Columns: ${optimalColumns})`);
+    if (imageDataUri && embeddedImage) {
+         console.log(`Image: Included (Dimensions: ${imageDims.width.toFixed(0)}x${imageDims.height.toFixed(0)}pt)`);
+    } else if (imageDataUri) {
+         console.log(`Image: Provided but failed to embed or unsupported format.`);
+    }
     console.log(`-------------------------`);
     return pdfBytes;
 }

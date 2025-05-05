@@ -3,7 +3,7 @@
 
 import type * as React from 'react';
 import { useState, useEffect, useMemo, useCallback, useTransition } from 'react';
-import { Printer, FileText, Loader2, RefreshCw, Settings2, Pilcrow, AlignLeft, AlignCenter, AlignRight, CaseSensitive } from 'lucide-react';
+import { Printer, FileText, Loader2, RefreshCw, Settings2, Pilcrow, AlignLeft, AlignCenter, AlignRight, CaseSensitive, Image as ImageIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
@@ -15,8 +15,8 @@ import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Checkbox } from "@/components/ui/checkbox"; // Import Checkbox
 
 interface LabelPreviewProps {
   summary: string | null;
@@ -25,7 +25,81 @@ interface LabelPreviewProps {
   isGeneratingSummary: boolean; // True when AI is generating summary
   canGenerate: boolean; // True when items are identified and summary is ready
   onRegenerateSummary: (items: string[]) => void; // Callback to trigger summary regeneration
+  photoDataUri: string | null; // Pass the original photo URI for potential inclusion
 }
+
+// Constants for image processing
+const MAX_IMAGE_WIDTH_PX = 200; // Max width for the image on the label
+const MAX_IMAGE_HEIGHT_PX = 100; // Max height for the image on the label
+
+// Simple image processing function (resize and convert to grayscale Data URI)
+// In a real app, more robust client-side image processing library would be better
+async function processImageForLabel(dataUri: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(null); // Canvas context not supported
+        return;
+      }
+
+      // Calculate new dimensions while maintaining aspect ratio
+      let newWidth = img.width;
+      let newHeight = img.height;
+      const scaleX = MAX_IMAGE_WIDTH_PX / img.width;
+      const scaleY = MAX_IMAGE_HEIGHT_PX / img.height;
+      const scale = Math.min(scaleX, scaleY, 1); // Use min scale, don't enlarge
+
+      newWidth = img.width * scale;
+      newHeight = img.height * scale;
+
+      canvas.width = newWidth;
+      canvas.height = newHeight;
+
+      // Draw image resized
+      ctx.drawImage(img, 0, 0, newWidth, newHeight);
+
+      // Convert to grayscale
+      const imageData = ctx.getImageData(0, 0, newWidth, newHeight);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        data[i] = avg; // Red
+        data[i + 1] = avg; // Green
+        data[i + 2] = avg; // Blue
+        // Alpha (data[i + 3]) remains unchanged
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      // Basic dithering simulation (thresholding) - very primitive
+      // A proper dithering algorithm (e.g., Floyd-Steinberg) is complex to implement here
+      // This just converts to black/white based on a threshold
+      const threshold = 128;
+      const thresholdedData = ctx.getImageData(0, 0, newWidth, newHeight);
+      const tData = thresholdedData.data;
+       for (let i = 0; i < tData.length; i += 4) {
+         const gray = tData[i]; // Already grayscale
+         const bw = gray < threshold ? 0 : 255;
+         tData[i] = bw;
+         tData[i+1] = bw;
+         tData[i+2] = bw;
+       }
+       ctx.putImageData(thresholdedData, 0, 0);
+
+
+      // Get Data URI (use PNG for potentially better grayscale representation)
+      resolve(canvas.toDataURL('image/png')); // Can also use 'image/jpeg'
+    };
+    img.onerror = () => {
+      console.error("Failed to load image for processing.");
+      resolve(null); // Resolve with null on error
+    };
+    img.src = dataUri;
+  });
+}
+
 
 export function LabelPreview({
   summary,
@@ -34,6 +108,7 @@ export function LabelPreview({
   isGeneratingSummary,
   canGenerate,
   onRegenerateSummary,
+  photoDataUri, // Receive the original photo URI
 }: LabelPreviewProps) {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -42,12 +117,38 @@ export function LabelPreview({
       fontFamily: 'Helvetica',
       textAlign: 'left',
   });
+  const [includeImageChecked, setIncludeImageChecked] = useState(false); // State for checkbox
+  const [processedImageDataUri, setProcessedImageDataUri] = useState<string | null>(null); // State for processed image
+  const [isProcessingImage, startImageProcessingTransition] = useTransition();
+
   const { toast } = useToast();
   const [pdfGenerationKey, setPdfGenerationKey] = useState(0); // Key to force iframe reload
   const [isGeneratingPreview, startPreviewTransition] = useTransition();
 
-  const isLoading = isGeneratingSummary || isPrinting || isGeneratingPdf || isGeneratingPreview;
+  const isLoading = isGeneratingSummary || isPrinting || isGeneratingPdf || isGeneratingPreview || isProcessingImage;
   const labelAspectRatio = useMemo(() => config.labelWidthInches / config.labelHeightInches, [config]);
+
+  // Process image when checkbox is checked and photo exists
+  useEffect(() => {
+     if (includeImageChecked && photoDataUri) {
+       startImageProcessingTransition(async () => {
+         try {
+           const processedUri = await processImageForLabel(photoDataUri);
+           setProcessedImageDataUri(processedUri);
+            if (!processedUri) {
+              toast({ title: 'Image Error', description: 'Could not process image for label.', variant: 'destructive' });
+            }
+         } catch (error) {
+            console.error("Image processing error:", error);
+             toast({ title: 'Image Error', description: 'Failed to process image.', variant: 'destructive' });
+             setProcessedImageDataUri(null);
+         }
+       });
+     } else {
+       setProcessedImageDataUri(null); // Clear processed image if unchecked or no photo
+     }
+  }, [includeImageChecked, photoDataUri, toast]);
+
 
   // Generate PDF preview whenever relevant props change
   useEffect(() => {
@@ -56,7 +157,14 @@ export function LabelPreview({
     const generatePreview = async () => {
       if (canGenerate && summary && items.length > 0) {
         try {
-          const labelContent: LabelContent = { summary, items, formatting: formattingOptions };
+          // Use processed image if checkbox is checked and processing is done
+          const imageToInclude = includeImageChecked ? processedImageDataUri : null;
+          const labelContent: LabelContent = {
+             summary,
+             items,
+             formatting: formattingOptions,
+             imageDataUri: imageToInclude // Pass potentially null image URI
+            };
           const pdfBytes = await generatePdf(config, labelContent);
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
           objectUrl = URL.createObjectURL(blob);
@@ -72,7 +180,8 @@ export function LabelPreview({
       }
     };
 
-     // Debounce PDF generation slightly to avoid excessive regeneration during rapid changes
+     // Regenerate preview if processed image changes (or becomes null)
+     // Regenerate if includeImageChecked changes
     const timeoutId = setTimeout(() => {
        startPreviewTransition(generatePreview);
     }, 300); // 300ms debounce
@@ -84,7 +193,8 @@ export function LabelPreview({
           URL.revokeObjectURL(objectUrl);
        }
     };
-  }, [summary, items, config, canGenerate, formattingOptions, toast]); // Regenerate on these changes
+    // Add processedImageDataUri and includeImageChecked to dependencies
+  }, [summary, items, config, canGenerate, formattingOptions, toast, processedImageDataUri, includeImageChecked]);
 
 
   const handleRegenerateClick = useCallback(() => {
@@ -99,9 +209,9 @@ export function LabelPreview({
        return;
     }
     setIsPrinting(true);
-    const labelContent: LabelContent = { summary, items, formatting: formattingOptions };
+    const imageToInclude = includeImageChecked ? processedImageDataUri : null;
+    const labelContent: LabelContent = { summary, items, formatting: formattingOptions, imageDataUri: imageToInclude };
     try {
-      // Consider directly printing the generated PDF blob if possible
       await printLabel(config, labelContent);
       toast({ title: 'Success', description: 'Label sent to printer.' });
     } catch (error) {
@@ -117,15 +227,16 @@ export function LabelPreview({
        toast({ title: 'Error', description: 'Cannot download PDF without summary and items.', variant: 'destructive' });
        return;
     }
-    // Re-generate PDF for download to ensure it's the latest version
     setIsGeneratingPdf(true);
-    const labelContent: LabelContent = { summary, items, formatting: formattingOptions };
+    const imageToInclude = includeImageChecked ? processedImageDataUri : null;
+    const labelContent: LabelContent = { summary, items, formatting: formattingOptions, imageDataUri: imageToInclude };
     try {
       const pdfBytes = await generatePdf(config, labelContent);
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = `label-${summary?.toLowerCase().replace(/\s+/g, '-') || 'generated'}.pdf`;
+      const safeSummary = summary?.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'label';
+      link.download = `label-${safeSummary}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -168,7 +279,7 @@ export function LabelPreview({
                     onValueChange={(value) => handleFormattingChange('fontFamily', value as typeof formattingOptions.fontFamily)}
                  >
                     <SelectTrigger id="font-family" className="w-full">
-                        <SelectValue placeholder="Select font" />
+                        <SelectValue placeholder="Select Font" />
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="Helvetica">Helvetica (Sans-Serif)</SelectItem>
@@ -187,19 +298,35 @@ export function LabelPreview({
                         if (value) handleFormattingChange('textAlign', value as typeof formattingOptions.textAlign)
                     }}
                     className="flex justify-around"
-                    aria-label="Text alignment"
+                    aria-label="Text Alignment"
                  >
-                    <ToggleGroupItem value="left" aria-label="Left align">
+                    <ToggleGroupItem value="left" aria-label="Left Align">
                       <AlignLeft className="h-4 w-4" />
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="center" aria-label="Center align">
+                    <ToggleGroupItem value="center" aria-label="Center Align">
                       <AlignCenter className="h-4 w-4" />
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="right" aria-label="Right align">
+                    <ToggleGroupItem value="right" aria-label="Right Align">
                        <AlignRight className="h-4 w-4" />
                     </ToggleGroupItem>
                  </ToggleGroup>
               </div>
+              <div className="flex items-center space-x-2 pt-2">
+                <Checkbox
+                    id="include-image"
+                    checked={includeImageChecked}
+                    onCheckedChange={(checked) => setIncludeImageChecked(Boolean(checked))}
+                    disabled={!photoDataUri || isLoading} // Disable if no photo or loading
+                    aria-label="Include image on label"
+                />
+                <Label htmlFor="include-image" className="text-sm font-medium cursor-pointer">
+                    Include Image
+                </Label>
+                {isProcessingImage && <Loader2 className="h-4 w-4 animate-spin" />}
+            </div>
+             {!photoDataUri && (
+                <p className="text-xs text-muted-foreground">Upload photo to enable image inclusion.</p>
+             )}
           </PopoverContent>
         </Popover>
       </CardHeader>
@@ -211,12 +338,12 @@ export function LabelPreview({
         )}
         {!isLoading && !canGenerate && (
            <div className="text-center text-muted-foreground text-sm p-4">
-             {summary === 'Empty' ? 'No items identified to generate a label.' : 'Identify items or generate summary first...'}
+             {summary === 'Empty' ? 'No items identified to generate a label.' : 'Identify items or generate summary first.'}
           </div>
         )}
          {pdfPreviewUrl && (
            <div className="relative w-full h-full max-w-md mx-auto" style={{ aspectRatio: labelAspectRatio }}>
-             {isGeneratingPreview && (
+             {(isGeneratingPreview || (includeImageChecked && isProcessingImage)) && ( // Show loader if previewing OR processing checked image
                  <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10 rounded-md">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
                  </div>
@@ -227,7 +354,7 @@ export function LabelPreview({
                 title="Label Preview"
                 className={cn(
                     "w-full h-full border rounded-md shadow-sm",
-                    isGeneratingPreview && "opacity-50" // Slightly dim while loading new preview
+                   (isGeneratingPreview || (includeImageChecked && isProcessingImage)) && "opacity-50" // Dim while loading
                 )}
                 style={{ contain: 'content' }} // Optimization hint
              />

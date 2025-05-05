@@ -32,6 +32,7 @@ export function PhotoUploader({ onPhotoUploaded, onPhotoCleared, disabled }: Pho
         reader.onloadend = () => {
           const dataUri = reader.result as string;
           setPreviewUrl(dataUri);
+          // Pass both dataUri and file object
           onPhotoUploaded(dataUri, file);
         };
         reader.readAsDataURL(file);
@@ -39,6 +40,7 @@ export function PhotoUploader({ onPhotoUploaded, onPhotoCleared, disabled }: Pho
     },
     [onPhotoUploaded]
   );
+
 
   const handleClear = useCallback(() => {
     setPreviewUrl(null);
@@ -71,7 +73,7 @@ export function PhotoUploader({ onPhotoUploaded, onPhotoCleared, disabled }: Pho
                 size="icon"
                 className="absolute top-2 right-2 h-6 w-6 rounded-full"
                 onClick={handleClear}
-                aria-label="Clear photo"
+                aria-label="Clear Photo"
                 disabled={disabled}
               >
                 <X className="h-4 w-4" />
@@ -87,11 +89,11 @@ export function PhotoUploader({ onPhotoUploaded, onPhotoCleared, disabled }: Pho
               onKeyDown={(e) => !disabled && (e.key === 'Enter' || e.key === ' ') && handleUploadClick()}
               role="button"
               tabIndex={disabled ? -1 : 0}
-              aria-label="Upload photo area"
+              aria-label="Upload Photo Area"
             >
               <Upload className="h-10 w-10 text-muted-foreground mb-2" />
               <Label className="text-sm text-muted-foreground">
-                Click or tap to upload a photo
+                Click or Tap to Upload a Photo
               </Label>
               <Input
                 ref={fileInputRef}
