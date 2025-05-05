@@ -19,8 +19,8 @@ import { Label } from '@/components/ui/label';
 import { capitalizeWords } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'; // Import Tooltip components
 
-// Python Desktop App API URLs
-const PYTHON_API_BASE_URL = 'http://localhost:5001'; // Default URL for the local Python print API
+// Python Desktop App API URLs (Now relative paths)
+const PYTHON_API_BASE_URL = '/api'; // Base path for API calls served by Flask
 const PYTHON_HEALTH_URL = `${PYTHON_API_BASE_URL}/health`;
 const PYTHON_PRINTERS_URL = `${PYTHON_API_BASE_URL}/printers`;
 const HEALTH_CHECK_INTERVAL = 10000; // Check health every 10 seconds
@@ -57,11 +57,20 @@ const LabelVisionPage: FC = () => {
   // --- API Health Check ---
   const checkApiHealth = useCallback(async () => {
     try {
+      // Use relative URL
       const response = await fetch(PYTHON_HEALTH_URL);
       if (response.ok) {
-        setApiStatus('healthy');
+        const data = await response.json();
+        if (data.status === 'ok') {
+             setApiStatus('healthy');
+        } else {
+             setApiStatus('unhealthy');
+             console.warn('API health check returned non-ok status:', data);
+        }
+
       } else {
         setApiStatus('unhealthy');
+        console.warn('API health check failed with status:', response.status);
       }
     } catch (err) {
       setApiStatus('unhealthy');
@@ -85,6 +94,7 @@ const LabelVisionPage: FC = () => {
          return;
       }
       try {
+        // Use relative URL
         const response = await fetch(PYTHON_PRINTERS_URL);
         if (!response.ok) {
           throw new Error(`Failed to fetch printers: ${response.statusText}`);
@@ -103,7 +113,7 @@ const LabelVisionPage: FC = () => {
         console.error('Error fetching printers:', err);
         toast({
           title: 'Could not fetch printers',
-          description: 'Failed to get printer list from the desktop app. Ensure it is running.',
+          description: 'Failed to get printer list from the print service.',
           variant: 'destructive'
         });
         setAvailablePrinters([]);
@@ -363,7 +373,7 @@ const LabelVisionPage: FC = () => {
               canGenerate={canGenerate}
               onRegenerateSummary={() => handleGenerateOrRegenerateSummary(identifiedItems)}
               photoDataUri={photoDataUri}
-              pythonApiUrl={PYTHON_API_BASE_URL} // Pass base URL
+              pythonApiUrl={PYTHON_API_BASE_URL} // Pass relative base URL
             />
           </div>
         </main>

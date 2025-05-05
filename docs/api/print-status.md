@@ -1,14 +1,18 @@
-# API Documentation: /api/print-status (Next.js Endpoint)
+# API Documentation: /api/print-status (Next.js Endpoint - Independent Deployment)
 
-This document describes the API endpoint `/api/print-status` within the **Next.js application**. This endpoint is designed to **receive** status updates from an external printing service (e.g., the Python desktop application described in `docs/api/python-desktop-app.md`) *after* a print job has been processed by that external service.
+**Important Note:** This API endpoint is relevant **only** if you are running the Next.js application as a **separate process** (e.g., using `npm run dev` or `npm start` independently) and you want the Python desktop application (`python-print-service/app.py`) to send print status updates *back* to that separate Next.js instance.
 
-**Note:** Implementing the call *from* the Python app *to* this endpoint is optional and depends on whether real-time feedback in the Next.js UI about the final print outcome is required.
+**When the Python Flask application serves the static Next.js frontend (as configured in the `Dockerfile` and `python-print-service/app.py`), this endpoint on the Next.js side is typically NOT used.** Feedback mechanisms in that scenario would usually involve the frontend polling the Python `/api/health` or potentially a WebSocket connection if implemented.
 
-## Endpoint: `/api/print-status`
+---
+
+This document describes the API endpoint `/api/print-status` within a **standalone Next.js application**. This endpoint is designed to **receive** status updates from an external printing service (e.g., the Python desktop application described in `docs/api/python-desktop-app.md`) *after* a print job has been processed by that external service.
+
+## Endpoint: `/api/print-status` (on the Standalone Next.js App)
 
 ### Purpose
 
-To allow an external printing service (like the Python desktop app) to notify the Next.js application about the success or failure of a print job that was *initiated* by the Next.js app sending data *to* the Python app's `/print` endpoint.
+To allow an external printing service (like the Python desktop app) to notify a *separate* Next.js application about the success or failure of a print job that was *initiated* by the Next.js app sending data *to* the Python app's `/api/print` endpoint.
 
 ### Method: `POST`
 
@@ -27,12 +31,12 @@ The request body must be in JSON format and should adhere to the following schem
 
 **Field Descriptions:**
 
-*   `jobId` (String, Optional): A unique identifier that might correlate the status update with the initial `/print` request sent to the Python app.
+*   `jobId` (String, Optional): A unique identifier that might correlate the status update with the initial `/api/print` request sent to the Python app.
 *   `status` (String, Required): Indicates the final status of the print attempt. Must be either `"success"` or `"error"`.
 *   `message` (String, Optional): Provides additional context or details from the printing system or printer itself.
 *   `printerName` (String, Optional): The name or identifier of the printer used.
 
-**Example Request Body (Success - Sent by Python):**
+**Example Request Body (Success - Sent by Python to Standalone Next.js):**
 
 ```json
 {
@@ -43,7 +47,7 @@ The request body must be in JSON format and should adhere to the following schem
 }
 ```
 
-**Example Request Body (Error - Sent by Python):**
+**Example Request Body (Error - Sent by Python to Standalone Next.js):**
 
 ```json
 {
@@ -54,7 +58,7 @@ The request body must be in JSON format and should adhere to the following schem
 }
 ```
 
-### Responses (Sent by Next.js back to Python)
+### Responses (Sent by Standalone Next.js back to Python)
 
 *   **`200 OK`**:
     *   **Content:** `application/json`
@@ -75,7 +79,7 @@ The request body must be in JSON format and should adhere to the following schem
 
 ### Purpose
 
-Provides a simple health check to confirm the Next.js API endpoint itself is active.
+Provides a simple health check to confirm the **standalone Next.js API endpoint** itself is active.
 
 ### Request Body
 
@@ -85,13 +89,13 @@ None.
 
 *   **`200 OK`**:
     *   **Content:** `application/json`
-    *   **Body:** `{ "message": "Print Status API (Next.js) is active. Use POST to submit status." }`
+    *   **Body:** `{ "message": "Print Status API (Standalone Next.js) is active. Use POST to submit status." }`
     *   **Description:** Confirms that the Next.js API route is running and accessible.
 
-### Notes
+### Notes (Standalone Next.js Context)
 
 *   This endpoint currently logs the received status to the Next.js server console. In a more advanced application, receiving a status update here could:
     *   Update a database record associated with the print job.
     *   Use WebSockets (e.g., Pusher, Socket.IO, or Firebase Realtime Database listeners) to push the status update to the specific user's browser session for real-time UI feedback.
     *   Log the status to a monitoring system.
-*   Authentication/Authorization is not currently implemented but would be advisable in production to ensure status updates originate from a trusted source (the Python app).
+*   Authentication/Authorization would be advisable in production to ensure status updates originate from a trusted source (the Python app).

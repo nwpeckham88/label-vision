@@ -1,6 +1,7 @@
 Flask>=2.0
 Flask-Cors>=3.0
 requests>=2.20 # For sending status back to Next.js (optional)
+gunicorn>=20.0 # For running Flask app in production/Docker
 
 # Platform-specific printing libraries:
 # Install pywin32 manually on Windows if needed: pip install pywin32

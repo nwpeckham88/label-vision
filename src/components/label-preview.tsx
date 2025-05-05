@@ -30,7 +30,7 @@ interface LabelPreviewProps {
   canGenerate: boolean; // True when items identified and summary ready
   onRegenerateSummary: (items: string[]) => void;
   photoDataUri: string | null;
-  pythonApiUrl: string; // Base URL for the Python desktop API
+  pythonApiUrl: string; // Base URL for the Python desktop API (now relative)
 }
 
 // Constants for image processing
@@ -103,7 +103,7 @@ export function LabelPreview({
   canGenerate,
   onRegenerateSummary,
   photoDataUri,
-  pythonApiUrl, // New prop
+  pythonApiUrl, // New prop (now relative '/api')
 }: LabelPreviewProps) {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -123,7 +123,8 @@ export function LabelPreview({
 
   const isLoading = isGeneratingSummary || isPrinting || isGeneratingPdf || isGeneratingPreview || isProcessingImage;
   const labelAspectRatio = useMemo(() => dimensions.labelWidthInches / dimensions.labelHeightInches, [dimensions]);
-  const printApiUrl = `${pythonApiUrl}/print`; // Construct the full print API URL
+  // Construct the full print API URL using the relative base path
+  const printApiUrl = `${pythonApiUrl}/print`;
 
   // --- Determine Print Button State ---
   const isPrintDisabled = isLoading || !canGenerate || !selectedPrinter || apiStatus !== 'healthy';
@@ -216,8 +217,8 @@ export function LabelPreview({
       const pdfBytes = await generatePdf(dimensions, labelContent);
       const base64Pdf = Buffer.from(pdfBytes).toString('base64');
 
-      // 2. Send to Python API using the constructed URL and selected printer
-      const response = await fetch(printApiUrl, { // Use dynamic URL
+      // 2. Send to Python API using the constructed relative URL and selected printer
+      const response = await fetch(printApiUrl, { // Use relative URL
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -240,11 +241,13 @@ export function LabelPreview({
     } catch (error) {
       console.error('Printing failed:', error);
       let userMessage = 'An unknown error occurred during printing.';
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        userMessage = `Could not connect to the printing service at ${pythonApiUrl}. Ensure the Python desktop app is running.`;
+      // Check if the fetch failed (e.g., network error, service down)
+      if (error instanceof TypeError) { // Network errors often manifest as TypeErrors from fetch
+           userMessage = `Could not connect to the printing service. Ensure it is running.`;
       } else if (error instanceof Error) {
-        userMessage = error.message;
+          userMessage = error.message; // Use specific error message from API if available
       }
+
       setPrintError(userMessage);
       toast({ title: 'Printing Error', description: userMessage, variant: 'destructive' });
     } finally {
@@ -443,4 +446,3 @@ export function LabelPreview({
     </Card>
   );
 }
-
