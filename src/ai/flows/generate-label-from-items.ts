@@ -1,60 +1,64 @@
 'use server';
 
 /**
- * @fileOverview This file defines a Genkit flow for generating a label from a list of identified items.
+ * @fileOverview This file defines a Genkit flow for generating a concise summary from a list of identified items.
  *
- * - generateLabelFromItems - A function that generates a label based on identified items.
- * - GenerateLabelFromItemsInput - The input type for the generateLabelFromItems function.
- * - GenerateLabelFromItemsOutput - The return type for the generateLabelFromItems function.
+ * - generateSummaryFromItems - A function that generates a summary based on identified items.
+ * - GenerateSummaryFromItemsInput - The input type for the generateSummaryFromItems function.
+ * - GenerateSummaryFromItemsOutput - The return type for the generateSummaryFromItems function.
  */
 
 import {ai} from '@/ai/ai-instance';
 import {z} from 'genkit';
 
-const GenerateLabelFromItemsInputSchema = z.object({
-  items: z.array(z.string()).describe('A list of identified items to include on the label.'),
+const GenerateSummaryFromItemsInputSchema = z.object({
+  items: z.array(z.string()).describe('A list of identified items to summarize.'),
 });
-export type GenerateLabelFromItemsInput = z.infer<typeof GenerateLabelFromItemsInputSchema>;
+export type GenerateSummaryFromItemsInput = z.infer<typeof GenerateSummaryFromItemsInputSchema>;
 
-const GenerateLabelFromItemsOutputSchema = z.object({
-  labelText: z.string().describe('The text to be printed on the label.'),
+const GenerateSummaryFromItemsOutputSchema = z.object({
+  summary: z.string().describe('A concise summary text based on the provided items.'),
 });
-export type GenerateLabelFromItemsOutput = z.infer<typeof GenerateLabelFromItemsOutputSchema>;
+export type GenerateSummaryFromItemsOutput = z.infer<typeof GenerateSummaryFromItemsOutputSchema>;
 
-export async function generateLabelFromItems(input: GenerateLabelFromItemsInput): Promise<GenerateLabelFromItemsOutput> {
-  return generateLabelFromItemsFlow(input);
+export async function generateSummaryFromItems(input: GenerateSummaryFromItemsInput): Promise<GenerateSummaryFromItemsOutput> {
+  return generateSummaryFromItemsFlow(input);
 }
 
-const generateLabelPrompt = ai.definePrompt({
-  name: 'generateLabelPrompt',
+const generateSummaryPrompt = ai.definePrompt({
+  name: 'generateSummaryPrompt',
   input: {
     schema: z.object({
-      items: z.array(z.string()).describe('A list of identified items to include on the label.'),
+      items: z.array(z.string()).describe('A list of identified items to summarize.'),
     }),
   },
   output: {
     schema: z.object({
-      labelText: z.string().describe('The text to be printed on the label.'),
+      summary: z.string().describe('A concise summary text based on the provided items.'),
     }),
   },
-  prompt: `You are a label generation expert. Given a list of items, generate concise label text suitable for printing on a label.
+  prompt: `You are a labelling expert. Given a list of items, generate a concise summary (max 5 words) suitable for a label header. Focus on the most prominent or defining items if the list is long.
 
 Items: {{#each items}}{{{this}}}{{#unless @last}}, {{/unless}}{{/each}}
 
-Label Text:`, 
+Summary:`,
 });
 
-const generateLabelFromItemsFlow = ai.defineFlow<
-  typeof GenerateLabelFromItemsInputSchema,
-  typeof GenerateLabelFromItemsOutputSchema
+const generateSummaryFromItemsFlow = ai.defineFlow<
+  typeof GenerateSummaryFromItemsInputSchema,
+  typeof GenerateSummaryFromItemsOutputSchema
 >(
   {
-    name: 'generateLabelFromItemsFlow',
-    inputSchema: GenerateLabelFromItemsInputSchema,
-    outputSchema: GenerateLabelFromItemsOutputSchema,
+    name: 'generateSummaryFromItemsFlow',
+    inputSchema: GenerateSummaryFromItemsInputSchema,
+    outputSchema: GenerateSummaryFromItemsOutputSchema,
   },
   async input => {
-    const {output} = await generateLabelPrompt(input);
+    // Handle empty item list gracefully
+    if (input.items.length === 0) {
+      return { summary: 'Empty' };
+    }
+    const {output} = await generateSummaryPrompt(input);
     return output!;
   }
 );

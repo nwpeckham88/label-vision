@@ -2,9 +2,9 @@
 'use client';
 
 import type { FC } from 'react';
-import { useState, useCallback, useTransition } from 'react';
+import { useState, useCallback, useTransition, useMemo } from 'react';
 import { identifyItemsFromPhoto } from '@/ai/flows/identify-items-from-photo';
-import { generateLabelFromItems } from '@/ai/flows/generate-label-from-items';
+import { generateSummaryFromItems } from '@/ai/flows/generate-label-from-items'; // Renamed import
 import { PhotoUploader } from '@/components/photo-uploader';
 import { ItemList } from '@/components/item-list';
 import { LabelPreview } from '@/components/label-preview';
@@ -13,34 +13,66 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import { Wand2, AlertTriangle, Upload, Package, FileText } from 'lucide-react'; // Import necessary icons
+import { Wand2, AlertTriangle, Upload, Package, FileText, Ruler } from 'lucide-react'; // Import necessary icons
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { PrinterConfig } from '@/services/label-printer';
+import { Label } from '@/components/ui/label';
+
+// Define standard label sizes
+const LABEL_SIZES: Record<string, PrinterConfig> = {
+  small: { printerName: 'DefaultLabelPrinter', labelWidthInches: 2.25, labelHeightInches: 1.25 },
+  medium: { printerName: 'DefaultLabelPrinter', labelWidthInches: 4, labelHeightInches: 2 },
+  large: { printerName: 'DefaultLabelPrinter', labelWidthInches: 4, labelHeightInches: 6 },
+};
+const DEFAULT_LABEL_SIZE_KEY = 'small';
 
 
 const LabelVisionPage: FC = () => {
   const [photoDataUri, setPhotoDataUri] = useState<string | null>(null);
   const [identifiedItems, setIdentifiedItems] = useState<string[]>([]);
-  const [generatedLabel, setGeneratedLabel] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null); // State for summary
+  const [selectedLabelSizeKey, setSelectedLabelSizeKey] = useState<string>(DEFAULT_LABEL_SIZE_KEY);
   const [error, setError] = useState<string | null>(null);
 
   const [isIdentifying, startIdentifyingTransition] = useTransition();
-  const [isGeneratingLabel, startGeneratingLabelTransition] = useTransition();
+  const [isGeneratingSummary, startGeneratingSummaryTransition] = useTransition(); // Separate transition for summary
 
   const { toast } = useToast();
 
+  const selectedConfig = useMemo(() => LABEL_SIZES[selectedLabelSizeKey], [selectedLabelSizeKey]);
+
   const handlePhotoUpload = useCallback((dataUri: string) => {
     setPhotoDataUri(dataUri);
-    setIdentifiedItems([]); // Clear previous items
-    setGeneratedLabel(null); // Clear previous label
-    setError(null); // Clear previous errors
+    setIdentifiedItems([]);
+    setSummary(null);
+    setError(null);
   }, []);
 
    const handlePhotoClear = useCallback(() => {
     setPhotoDataUri(null);
     setIdentifiedItems([]);
-    setGeneratedLabel(null);
+    setSummary(null);
     setError(null);
   }, []);
 
+  const handleGenerateSummary = useCallback(async (items: string[]) => {
+    if (items.length === 0) {
+      setSummary('Empty'); // Handle case where no items were identified
+      return;
+    }
+    setError(null);
+    startGeneratingSummaryTransition(async () => {
+      try {
+        const result = await generateSummaryFromItems({ items });
+        setSummary(result.summary);
+        toast({ title: 'Summary Generated', description: 'Label summary created.' });
+      } catch (err) {
+        console.error('Summary generation error:', err);
+        setError('Failed to generate summary. Please try again.');
+        toast({ title: 'Error', description: 'Summary generation failed.', variant: 'destructive' });
+      }
+    });
+  }, [toast]); // Dependency: toast
 
   const handleIdentifyItems = useCallback(async () => {
     if (!photoDataUri) {
@@ -48,18 +80,20 @@ const LabelVisionPage: FC = () => {
       return;
     }
     setError(null);
-    setIdentifiedItems([]); // Clear previous items before starting
-    setGeneratedLabel(null); // Clear label as well
+    setIdentifiedItems([]); // Clear previous items
+    setSummary(null); // Clear previous summary
 
     startIdentifyingTransition(async () => {
       try {
         const result = await identifyItemsFromPhoto({ photoDataUri });
         setIdentifiedItems(result.items);
         if (result.items.length > 0) {
-          // Automatically trigger label generation after successful identification
-          handleGenerateLabel(result.items);
+           toast({ title: 'Identification Complete', description: `${result.items.length} item(s) identified. Generating summary...`});
+           // Automatically trigger summary generation after successful identification
+           handleGenerateSummary(result.items);
         } else {
             toast({ title: 'Identification Complete', description: 'No items were identified in the photo.'});
+            setSummary('Empty'); // Set summary explicitly for no items case
         }
       } catch (err) {
         console.error('Identification error:', err);
@@ -67,37 +101,14 @@ const LabelVisionPage: FC = () => {
         toast({ title: 'Error', description: 'Item identification failed.', variant: 'destructive' });
       }
     });
-  }, [photoDataUri, toast]); // Removed handleGenerateLabel from dependency array
+  }, [photoDataUri, toast, handleGenerateSummary]); // Dependency: handleGenerateSummary
 
-
-  const handleGenerateLabel = useCallback((items: string[]) => {
-     if (items.length === 0) {
-      // Don't try to generate if no items were identified
-      setGeneratedLabel(''); // Set empty label instead of null to show the empty text area
-      return;
-    }
-    setError(null);
-
-    startGeneratingLabelTransition(async () => {
-      try {
-        const result = await generateLabelFromItems({ items });
-        setGeneratedLabel(result.labelText);
-         toast({ title: 'Label Generated', description: 'Label text created based on identified items.'});
-      } catch (err) {
-        console.error('Label generation error:', err);
-        setError('Failed to generate label. Please try again.');
-        toast({ title: 'Error', description: 'Label generation failed.', variant: 'destructive' });
-      }
-    });
-  }, [toast]); // Depends only on toast
-
-  const handleLabelTextChange = (newText: string) => {
-    // Allow user to edit the generated label
-    setGeneratedLabel(newText);
+  const handleLabelSizeChange = (value: string) => {
+    setSelectedLabelSizeKey(value);
   };
 
-  const isLoading = isIdentifying || isGeneratingLabel;
-  const itemsIdentified = identifiedItems.length > 0;
+  const isLoading = isIdentifying || isGeneratingSummary;
+  const canGenerate = !isLoading && identifiedItems.length > 0 && summary !== null; // Check if ready to generate/print
 
   return (
     <div className="container mx-auto p-4 md:p-8 min-h-screen flex flex-col bg-background">
@@ -106,7 +117,7 @@ const LabelVisionPage: FC = () => {
           <Wand2 className="text-primary h-8 w-8" /> Label Vision
         </h1>
         <p className="text-muted-foreground">
-          Upload a photo, identify items with AI, and generate a printable label instantly.
+          Upload a photo, identify items with AI, generate a structured label, and print or save as PDF.
         </p>
       </header>
 
@@ -119,7 +130,7 @@ const LabelVisionPage: FC = () => {
       )}
 
       <main className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Column 1: Upload */}
+        {/* Column 1: Upload & Settings */}
         <div className="flex flex-col gap-6">
          <Card>
             <CardHeader>
@@ -138,13 +149,40 @@ const LabelVisionPage: FC = () => {
                     onClick={handleIdentifyItems}
                     disabled={!photoDataUri || isLoading}
                     className="w-full mt-4"
-                    aria-label="Identify Items"
+                    aria-label="Identify Items & Generate Summary"
                 >
                    <Wand2 className="mr-2" />
-                    {isIdentifying ? 'Identifying...' : 'Identify Items'}
+                    {isIdentifying ? 'Identifying...' : (isGeneratingSummary ? 'Generating Summary...' : 'Identify & Summarize')}
                 </Button>
             </CardContent>
          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <Ruler className="h-5 w-5" />
+                Label Settings
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Label htmlFor="label-size" className="mb-2 block">Label Size</Label>
+              <Select
+                value={selectedLabelSizeKey}
+                onValueChange={handleLabelSizeChange}
+                disabled={isLoading}
+              >
+                <SelectTrigger id="label-size" className="w-full">
+                  <SelectValue placeholder="Select label size" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(LABEL_SIZES).map(([key, config]) => (
+                    <SelectItem key={key} value={key}>
+                      {key.charAt(0).toUpperCase() + key.slice(1)} ({config.labelWidthInches} x {config.labelHeightInches}")
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Column 2: Identify */}
@@ -155,10 +193,11 @@ const LabelVisionPage: FC = () => {
         {/* Column 3: Generate & Print */}
         <div className="flex flex-col gap-6">
            <LabelPreview
-            labelText={generatedLabel}
-            isLoading={isGeneratingLabel}
-            onLabelTextChange={handleLabelTextChange}
-            itemsIdentified={itemsIdentified || generatedLabel !== null} // Enable buttons if items identified OR label exists
+              summary={summary}
+              items={identifiedItems}
+              config={selectedConfig}
+              isGenerating={isGeneratingSummary} // Loading state specifically for summary/label generation
+              canGenerate={canGenerate}
            />
         </div>
       </main>
@@ -172,4 +211,3 @@ const LabelVisionPage: FC = () => {
 };
 
 export default LabelVisionPage;
-
