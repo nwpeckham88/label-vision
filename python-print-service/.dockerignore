@@ -1,0 +1,45 @@
+# Git files
+.git
+.gitignore
+
+# Python virtual environment
+venv
+.venv
+env
+*/env
+*/venv
+env.bak
+venv.bak
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Test files (optional, keep if running tests in Docker)
+# tests/
+# .pytest_cache/
+# coverage.*
+# htmlcov/
+
+# Secrets/config (should not be in repo anyway)
+# .env
+# *.local
+
+# Docker files (avoid copying themselves)
+Dockerfile
+.dockerignore
