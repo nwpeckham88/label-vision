@@ -10,13 +10,17 @@ import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/componen
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import type { PrinterConfig, LabelContent, LabelFormattingOptions } from '@/services/label-printer';
-import { printLabel, generatePdf } from '@/services/label-printer';
+// Remove direct import of printLabel if we're calling an external API
+// import { printLabel, generatePdf } from '@/services/label-printer';
+import { generatePdf } from '@/services/label-printer'; // Keep generatePdf
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Checkbox } from "@/components/ui/checkbox"; // Import Checkbox
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; // Import Alert components
+import { Info } from 'lucide-react'; // Import Info icon
 
 interface LabelPreviewProps {
   summary: string | null;
@@ -31,6 +35,7 @@ interface LabelPreviewProps {
 // Constants for image processing
 const MAX_IMAGE_WIDTH_PX = 200; // Max width for the image on the label
 const MAX_IMAGE_HEIGHT_PX = 100; // Max height for the image on the label
+const PYTHON_API_URL = 'http://localhost:5001/print'; // Default URL for the local Python print API
 
 // Simple image processing function (resize and convert to grayscale Data URI)
 // In a real app, more robust client-side image processing library would be better
@@ -120,6 +125,7 @@ export function LabelPreview({
   const [includeImageChecked, setIncludeImageChecked] = useState(false); // State for checkbox
   const [processedImageDataUri, setProcessedImageDataUri] = useState<string | null>(null); // State for processed image
   const [isProcessingImage, startImageProcessingTransition] = useTransition();
+  const [printError, setPrintError] = useState<string | null>(null); // State for printing errors
 
   const { toast } = useToast();
   const [pdfGenerationKey, setPdfGenerationKey] = useState(0); // Key to force iframe reload
@@ -204,23 +210,62 @@ export function LabelPreview({
   }, [items, onRegenerateSummary]);
 
   const handlePrint = async () => {
-    if (!canGenerate || !summary) {
-       toast({ title: 'Error', description: 'Cannot print label without summary and items.', variant: 'destructive' });
+     if (!canGenerate || !summary) {
+       toast({ title: 'Cannot Print', description: 'Label data is incomplete.', variant: 'destructive' });
        return;
-    }
-    setIsPrinting(true);
-    const imageToInclude = includeImageChecked ? processedImageDataUri : null;
-    const labelContent: LabelContent = { summary, items, formatting: formattingOptions, imageDataUri: imageToInclude };
-    try {
-      await printLabel(config, labelContent);
-      toast({ title: 'Success', description: 'Label sent to printer.' });
-    } catch (error) {
-      console.error('Printing failed:', error);
-      toast({ title: 'Error', description: 'Failed to print label.', variant: 'destructive' });
-    } finally {
-      setIsPrinting(false);
-    }
-  };
+     }
+     setIsPrinting(true);
+     setPrintError(null); // Clear previous errors
+
+     const imageToInclude = includeImageChecked ? processedImageDataUri : null;
+     const labelContent: LabelContent = { summary, items, formatting: formattingOptions, imageDataUri: imageToInclude };
+
+     try {
+        // 1. Generate the PDF
+        const pdfBytes = await generatePdf(config, labelContent);
+
+        // 2. Convert PDF bytes to Base64 string for JSON transport
+        const base64Pdf = Buffer.from(pdfBytes).toString('base64');
+
+        // 3. Send to Python API
+        const response = await fetch(PYTHON_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                pdfData: base64Pdf,
+                printerName: config.printerName, // Send selected printer name
+                // Add other options if the Python app needs them
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Unknown error structure' }));
+            const errorMessage = errorData.detail || `HTTP error! status: ${response.status}`;
+            console.error('Printing API error:', errorMessage);
+            throw new Error(`Failed to send label to printer: ${errorMessage}`);
+        }
+
+        const result = await response.json();
+        console.log('Print API response:', result);
+        toast({ title: 'Print Request Sent', description: result.message || 'Label sent to the printing service.' });
+
+     } catch (error) {
+        console.error('Printing failed:', error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during printing.';
+        // Check if it's a network error (Python app likely not running)
+        if (error instanceof TypeError && error.message.includes('fetch')) {
+             setPrintError(`Could not connect to the printing service at ${PYTHON_API_URL}. Ensure the Python desktop app is running.`);
+             toast({ title: 'Printing Service Error', description: 'Could not connect to the local printing service.', variant: 'destructive' });
+        } else {
+             setPrintError(errorMessage);
+             toast({ title: 'Printing Error', description: errorMessage, variant: 'destructive' });
+        }
+     } finally {
+        setIsPrinting(false);
+     }
+   };
 
    const handleDownloadPdf = async () => {
      if (!canGenerate || !summary) {
@@ -331,12 +376,24 @@ export function LabelPreview({
         </Popover>
       </CardHeader>
       <CardContent className="flex-grow flex flex-col items-center justify-center p-2 bg-muted/20">
+        {printError && (
+            <Alert variant="destructive" className="mb-4">
+              <Info className="h-4 w-4" />
+              <AlertTitle>Printing Service Unavailable</AlertTitle>
+              <AlertDescription>
+                {printError}
+                <Button variant="link" size="sm" onClick={() => setPrintError(null)} className="pl-1 h-auto py-0">
+                    Dismiss
+                </Button>
+              </AlertDescription>
+            </Alert>
+        )}
         {isLoading && !pdfPreviewUrl && ( // Show skeleton only if loading and no preview exists yet
           <div className="w-full h-full flex items-center justify-center">
              <Skeleton className="w-[80%] h-[80%] max-w-xs max-h-60" style={{ aspectRatio: labelAspectRatio }}/>
           </div>
         )}
-        {!isLoading && !canGenerate && (
+        {!isLoading && !canGenerate && !printError && ( // Don't show this if there's a print error
            <div className="text-center text-muted-foreground text-sm p-4">
              {summary === 'Empty' ? 'No items identified to generate a label.' : 'Identify items or generate summary first.'}
           </div>
@@ -390,10 +447,11 @@ export function LabelPreview({
               )}
               <span className="ml-2 hidden sm:inline">PDF</span>
             </Button>
+            {/* Update Print Button Handler */}
             <Button
               onClick={handlePrint}
               disabled={!canGenerate || isLoading}
-              aria-label="Print Label"
+              aria-label="Print Label via Desktop App"
             >
               {isPrinting ? (
                 <Loader2 className="animate-spin" />

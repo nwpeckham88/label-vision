@@ -3,9 +3,10 @@ import { PDFDocument, rgb, StandardFonts, PageSizes, PDFFont, degrees } from 'pd
 
 /**
  * Represents the configuration for a label printer.
+ * Although printing is external, dimensions are needed for PDF generation.
  */
 export interface PrinterConfig {
-  printerName: string;
+  printerName: string; // Might still be useful to pass to the Python app
   labelWidthInches: number;
   labelHeightInches: number;
 }
@@ -30,33 +31,8 @@ export interface LabelContent {
 
 const DPI = 72; // PDF points per inch
 
-/**
- * Asynchronously prints a label to the specified printer.
- * This remains a placeholder implementation.
- *
- * @param printerConfig The configuration for the printer.
- * @param labelContent The structured label content to print.
- * @returns A promise that resolves when the label has been printed successfully, or rejects if printing fails.
- */
-export async function printLabel(printerConfig: PrinterConfig, labelContent: LabelContent): Promise<void> {
-  // TODO: Implement actual printing logic (e.g., using browser print API with the generated PDF)
-  console.log(`--- Simulating Print ---`);
-  console.log(`Printer: ${printerConfig.printerName}`);
-  try {
-    const pdfBytes = await generatePdf(printerConfig, labelContent);
-    console.log(`Generated PDF for printing (${pdfBytes.length} bytes)`);
-    // In a real scenario: send pdfBytes to printer or open print dialog
-     // const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-     // const url = URL.createObjectURL(blob);
-     // window.open(url); // Example: Opens PDF in new tab, user can print
-  } catch (error) {
-      console.error("Failed to generate PDF for printing:", error);
-      throw error; // Re-throw error
-  }
-  console.log(`----------------------`);
-
-  return Promise.resolve();
-}
+// Removed the printLabel function as it's handled externally.
+// export async function printLabel(printerConfig: PrinterConfig, labelContent: LabelContent): Promise<void> { ... }
 
 /**
  * Asynchronously generates a PDF document for the specified label using pdf-lib.
