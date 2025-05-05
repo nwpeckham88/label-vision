@@ -17,6 +17,7 @@ import { Wand2, AlertTriangle, Upload, Package, Ruler } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { PrinterConfig } from '@/services/label-printer';
 import { Label } from '@/components/ui/label';
+import { capitalizeWords } from '@/lib/utils'; // Import the capitalization utility
 
 // Define standard label sizes
 const LABEL_SIZES: Record<string, PrinterConfig> = {
@@ -66,7 +67,10 @@ const LabelVisionPage: FC = () => {
     setSummary(null);
     startGeneratingSummaryTransition(async () => {
       try {
-        const result = await generateSummaryFromItems({ items: itemsToSummarize });
+        // Capitalize items before sending to summary generation,
+        // although the prompt might handle this, doing it here ensures consistency
+        const capitalizedItems = itemsToSummarize.map(capitalizeWords);
+        const result = await generateSummaryFromItems({ items: capitalizedItems });
         setSummary(result.summary);
         toast({ title: 'Summary Generated', description: 'Label summary created.' });
       } catch (err) {
@@ -90,10 +94,14 @@ const LabelVisionPage: FC = () => {
     startIdentifyingTransition(async () => {
       try {
         const result = await identifyItemsFromPhoto({ photoDataUri });
-        const newItems = result.items || [];
+        const rawItems = result.items || [];
+        // Capitalize each identified item
+        const newItems = rawItems.map(capitalizeWords);
         setIdentifiedItems(newItems);
+
         if (newItems.length > 0) {
            toast({ title: 'Identification Complete', description: `${newItems.length} item(s) identified. Generating summary...`});
+           // Pass the capitalized items for summary generation
            handleGenerateOrRegenerateSummary(newItems);
         } else {
             toast({ title: 'Identification Complete', description: 'No items were identified in the photo.'});
@@ -183,7 +191,7 @@ const LabelVisionPage: FC = () => {
                <SelectContent>
                  {Object.entries(LABEL_SIZES).map(([key, config]) => (
                    <SelectItem key={key} value={key}>
-                     {key.charAt(0).toUpperCase() + key.slice(1)} ({config.labelWidthInches} x {config.labelHeightInches}")
+                     {capitalizeWords(key)} ({config.labelWidthInches} x {config.labelHeightInches}")
                    </SelectItem>
                  ))}
                </SelectContent>
@@ -194,6 +202,7 @@ const LabelVisionPage: FC = () => {
 
         {/* Column 2: Identify */}
         <div className="flex flex-col gap-6 md:order-2">
+            {/* ItemList component will display the already capitalized items */}
             <ItemList items={identifiedItems} isLoading={isIdentifying} title="3. Identified Items" />
         </div>
 
@@ -201,11 +210,11 @@ const LabelVisionPage: FC = () => {
         <div className="flex flex-col gap-6 md:order-3">
            <LabelPreview
               summary={summary}
-              items={identifiedItems}
+              items={identifiedItems} // Pass the capitalized items
               config={selectedConfig}
               isGeneratingSummary={isGeneratingSummary}
               canGenerate={canGenerate}
-              onRegenerateSummary={handleGenerateOrRegenerateSummary}
+              onRegenerateSummary={() => handleGenerateOrRegenerateSummary(identifiedItems)} // Pass current (capitalized) items
               photoDataUri={photoDataUri} // Pass the original photo URI
            />
         </div>
