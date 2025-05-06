@@ -244,7 +244,8 @@ def print_cups(printer_name, pdf_data, job_name="LabelVision Print"):
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint for the print service API."""
-    logging.info("API health check requested.")
+    # Add specific log for this endpoint
+    logging.info("Received request for /api/health") 
     return jsonify({"status": "ok", "platform": SYSTEM_PLATFORM, "printer_lib": printer_lib or "none"})
 
 @app.route('/api/printers', methods=['GET'])
@@ -483,36 +484,46 @@ def serve_webapp(path):
     Serves the main Next.js index.html for client-side routing,
     or specific static assets if they exist.
     """
+    # Log the path being requested
+    logging.info(f"Serving request for path: {path or '/'}") 
+
     # Construct the full path relative to the web app directory
     full_path = os.path.join(WEB_APP_DIR, path)
+    logging.debug(f"Attempting to serve filesystem path: {full_path}")
 
     # Check if the requested path points to an existing file
     if path and os.path.exists(full_path) and os.path.isfile(full_path):
         # Serve the specific static file (e.g., image, css, js chunk)
-        logging.debug(f"Serving static file: {path}")
+        logging.info(f"Serving static file: {path}")
         return send_from_directory(WEB_APP_DIR, path)
     else:
         # Serve the main index.html for the root or any non-file path
         # This allows Next.js client-side router to handle the route
         index_path = os.path.join(WEB_APP_DIR, 'index.html')
+        logging.info(f"Attempting to serve index.html from: {index_path}")
         if not os.path.exists(index_path):
             logging.error(f"Web app index.html not found at {index_path}. Build the Next.js app first ('npm run build').")
             return jsonify({"error": "Web application not found. Please build the Next.js frontend."}), 404
-        logging.debug(f"Serving index.html for path: {path or '/'}")
+        logging.info(f"Serving index.html for path: {path or '/'}")
         return send_file(index_path)
 
 
 # --- Main Execution ---
 if __name__ == '__main__':
+    # Log entry into the main execution block
+    logging.info("Starting main execution block (__name__ == '__main__')") 
+
     # Use environment variable for port, default to 5001
-    port = int(os.environ.get('FLASK_RUN_PORT', 5001))
-    # Use environment variable for host, default to 127.0.0.1 (localhost)
-    # Set to '0.0.0.0' to be accessible from the network (e.g., within Docker)
-    host = os.environ.get('FLASK_RUN_HOST', '127.0.0.1')
+    port = int(os.environ.get('BACKEND_PORT', 5001))
+    # Use environment variable for host.
+    # Default to '0.0.0.0' which is suitable for Docker/network access.
+    # For local-only development, you might set BACKEND_HOST=127.0.0.1 explicitly.
+    host = os.environ.get('BACKEND_HOST', '0.0.0.0')
     # Use environment variable for debug mode, default to False
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
 
-    logging.info(f"Starting Flask server on {host}:{port} (Debug: {debug_mode})...")
+    # Log the determined host and port before starting server
+    logging.info(f"Flask development server configured for {host}:{port} (Debug: {debug_mode})" ) 
     logging.info(f"Web application static root directory: {WEB_APP_DIR}")
 
     if not os.path.exists(WEB_APP_DIR) or not os.path.exists(os.path.join(WEB_APP_DIR, 'index.html')):
@@ -522,6 +533,10 @@ if __name__ == '__main__':
          logging.warning("API endpoints will work, but the web interface will not load.")
          logging.warning("---")
 
-    # Run the Flask app
-    # Use debug=debug_mode for development reloading
+    # Important: When using Gunicorn via Docker CMD, these app.run settings are bypassed.
+    # They are primarily for direct `python app.py` execution.
+    # Add a log before attempting to run the dev server
+    logging.info("Attempting to start Flask development server using app.run()...") 
     app.run(host=host, port=port, debug=debug_mode)
+    # Add a log *after* app.run() if it ever returns (e.g., on shutdown)
+    logging.info("Flask development server has stopped.") 

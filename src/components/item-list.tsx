@@ -1,12 +1,10 @@
-
 'use client';
 
-import type * as React from 'react';
 import { Package } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 interface ItemListProps {
   items: string[];
@@ -40,7 +38,7 @@ export function ItemList({ items, isLoading, title = "Identified Items" }: ItemL
           </div>
         ) : (
           <p className="text-base text-muted-foreground italic"> {/* Slightly larger text */}
-            No items identified yet. Upload a photo and click "Identify & Summarize".
+            No items identified yet. Upload a photo and click &quot;Identify & Summarize&quot;.
           </p>
         )}
       </CardContent>

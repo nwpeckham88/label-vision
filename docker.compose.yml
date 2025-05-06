@@ -6,7 +6,11 @@ services:
     env_file:
       - .env # Loads environment variables from the .env file in the current directory
     ports:
-      - "3000:5001" # Maps port 3000 on the host to port 3000 in the container (adjust if your app uses a different port)
+      - "5001:${BACKEND_PORT:-5001}" # Maps port 5001 on the host to port 5001 in the container (adjust if your app uses a different port)
+    environment:
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=5001
+      - GEMINI_API_KEY=${GEMINI_API_KEY} # Make sure this is set, e.g., via .env file
     # volumes: # Optional: Uncomment and adjust if you need to mount local directories into the container (useful for development)
     #   - ./src:/app/src # Example: Mounts the local ./src directory to /app/src inside the container
     restart: unless-stopped # Configures the container to restart automatically unless manually stopped

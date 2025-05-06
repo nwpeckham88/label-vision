@@ -22,6 +22,16 @@ RUN npm run build
 # Stage 2: Setup the Python environment and run the Flask app
 FROM python:3.10-slim
 
+# Define build arguments for host and port with defaults
+ARG BACKEND_HOST=0.0.0.0
+ARG BACKEND_PORT=5001
+
+# Set environment variables from build arguments (allows override at runtime)
+ENV BACKEND_HOST=${BACKEND_HOST}
+ENV BACKEND_PORT=${BACKEND_PORT}
+# Also expose the port for documentation/clarity (doesn't affect runtime)
+EXPOSE ${BACKEND_PORT}
+
 WORKDIR /app
 
 # Install system dependencies required by some printing libraries (example for Debian/Ubuntu)
@@ -47,14 +57,16 @@ COPY python-print-service/app.py ./python-print-service/
 # Copy the built static frontend files from the builder stage
 COPY --from=frontend-builder /app/out ./out
 
-# Expose the port the Flask app runs on
-EXPOSE 5001
+# Expose the port the Flask app runs on (using the ENV variable)
+# Note: EXPOSE doesn't publish the port, just documents it. Publishing happens in docker run/compose.
+# EXPOSE ${BACKEND_PORT} # Already defined above ENV block
 
-# Set the command to run the Flask application
-# Use gunicorn or similar for production, but Flask dev server is fine for local/simpler deployments
-# CMD ["python", "python-print-service/app.py"]
-CMD ["gunicorn", "--bind", "0.0.0.0:5001", "python-print-service.app:app"]
+# Set the command to run the Flask application using Gunicorn with ENV variables
+# Use environment variables for binding host and port
+# Use shell form CMD to allow variable substitution
+CMD gunicorn --bind "${BACKEND_HOST}:${BACKEND_PORT}" python-print-service.app:app
 
 # Add healthcheck (optional but good practice)
+# Use the ENV variable for the port in the healthcheck URL
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:5001/api/health || exit 1
+  CMD curl -f http://localhost:${BACKEND_PORT}/api/health || exit 1

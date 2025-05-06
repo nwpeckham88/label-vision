@@ -1,15 +1,13 @@
-
 'use client';
 
-import type * as React from 'react';
-import { useState, useCallback, useRef } from 'react';
+import { ImagePlus, X } from 'lucide-react'; // Added ImagePlus
 import Image from 'next/image';
-import { Upload, X, ImagePlus } from 'lucide-react'; // Added ImagePlus
+import type * as React from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card'; // Using Card directly might be too much nesting
-import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
 interface PhotoUploaderProps {
@@ -24,16 +22,6 @@ export function PhotoUploader({ onPhotoUploaded, onPhotoCleared, disabled }: Pho
   const [isDragging, setIsDragging] = useState(false); // State for drag-n-drop visual feedback
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (file) {
-        processFile(file);
-      }
-    },
-    [onPhotoUploaded] // processFile already depends on this
-  );
-
   const processFile = useCallback((file: File) => {
     setFileName(file.name);
     const reader = new FileReader();
@@ -46,6 +34,15 @@ export function PhotoUploader({ onPhotoUploaded, onPhotoCleared, disabled }: Pho
     reader.readAsDataURL(file);
   }, [onPhotoUploaded]);
 
+  const handleFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (file) {
+        processFile(file);
+      }
+    },
+    [processFile] // Add missing dependency: processFile
+  );
 
   const handleClear = useCallback(() => {
     setPreviewUrl(null);

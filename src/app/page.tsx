@@ -133,7 +133,7 @@ const LabelVisionPage: FC = () => {
     fetchPrinters();
   }, [apiStatus, toast, selectedPrinter]); // Re-fetch when API status becomes healthy or selectedPrinter changes (to reset)
 
-  const handlePhotoUploaded = useCallback(async (dataUri: string, file: File) => {
+  const handlePhotoUploaded = useCallback(async (dataUri: string) => {
     setPhotoDataUri(dataUri);
     setIdentifiedItems([]);
     setLabelSummary('');

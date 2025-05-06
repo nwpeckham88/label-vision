@@ -39,7 +39,9 @@ export function PrintControls({ onPrint, disabled = false }: PrintControlsProps)
           try {
               const errorJson = await response.json() as ApiError;
               errorDetail = errorJson.detail || errorDetail;
-          } catch (e) { /* Ignore if not JSON */ }
+          } catch {
+             // Ignore if not JSON - Removed unused 'e' parameter
+          }
          throw new Error(errorDetail);
       }
       const printers = await response.json();
@@ -83,7 +85,7 @@ export function PrintControls({ onPrint, disabled = false }: PrintControlsProps)
     if (selectedPrinter) {
       onPrint(selectedPrinter);
     } else {
-       toast({ variant: 'warning', title: 'No Printer Selected', description: 'Please select a printer first.' });
+       toast({ variant: 'default', title: 'No Printer Selected', description: 'Please select a printer first.' });
     }
   };
 

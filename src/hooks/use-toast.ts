@@ -4,10 +4,10 @@
 import * as React from "react"
 
 import type {
-  ToastActionElement,
-  ToastProps,
+  ToastProps
 } from "@/components/ui/toast"
 
+// Constants
 const TOAST_LIMIT = 1
 const TOAST_REMOVE_DELAY = 1000000
 
@@ -15,9 +15,10 @@ type ToasterToast = ToastProps & {
   id: string
   title?: React.ReactNode
   description?: React.ReactNode
-  action?: ToastActionElement
+  action?: React.ReactElement
 }
 
+// Define Action Types Constant *before* Action type uses it
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
   UPDATE_TOAST: "UPDATE_TOAST",
@@ -27,28 +28,28 @@ const actionTypes = {
 
 let count = 0
 
+// Helper to generate unique toast ids
 function genId() {
-  count = (count + 1) % Number.MAX_SAFE_INTEGER
+  count = (count + 1) % Number.MAX_VALUE
   return count.toString()
 }
 
-type ActionType = typeof actionTypes
-
-type Action =
+// Action type definition using the constant
+type Action = 
   | {
-      type: ActionType["ADD_TOAST"]
+      type: typeof actionTypes.ADD_TOAST
       toast: ToasterToast
     }
   | {
-      type: ActionType["UPDATE_TOAST"]
+      type: typeof actionTypes.UPDATE_TOAST
       toast: Partial<ToasterToast>
     }
   | {
-      type: ActionType["DISMISS_TOAST"]
+      type: typeof actionTypes.DISMISS_TOAST
       toastId?: ToasterToast["id"]
     }
   | {
-      type: ActionType["REMOVE_TOAST"]
+      type: typeof actionTypes.REMOVE_TOAST
       toastId?: ToasterToast["id"]
     }
 
@@ -66,7 +67,7 @@ const addToRemoveQueue = (toastId: string) => {
   const timeout = setTimeout(() => {
     toastTimeouts.delete(toastId)
     dispatch({
-      type: "REMOVE_TOAST",
+      type: actionTypes.REMOVE_TOAST, // Use constant directly
       toastId: toastId,
     })
   }, TOAST_REMOVE_DELAY)
@@ -76,21 +77,24 @@ const addToRemoveQueue = (toastId: string) => {
 
 export const reducer = (state: State, action: Action): State => {
   switch (action.type) {
-    case "ADD_TOAST":
+    case actionTypes.ADD_TOAST:
       return {
         ...state,
+        // Ensure action.toast is accessed correctly based on discriminated union
         toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
       }
 
-    case "UPDATE_TOAST":
+    case actionTypes.UPDATE_TOAST:
       return {
         ...state,
+        // Ensure action.toast is accessed correctly
         toasts: state.toasts.map((t) =>
           t.id === action.toast.id ? { ...t, ...action.toast } : t
         ),
       }
 
-    case "DISMISS_TOAST": {
+    case actionTypes.DISMISS_TOAST: { 
+      // Ensure action.toastId is accessed correctly
       const { toastId } = action
 
       // ! Side effects ! - This could be extracted into a dismissToast() action,
@@ -115,7 +119,8 @@ export const reducer = (state: State, action: Action): State => {
         ),
       }
     }
-    case "REMOVE_TOAST":
+    case actionTypes.REMOVE_TOAST:
+       // Ensure action.toastId is accessed correctly
       if (action.toastId === undefined) {
         return {
           ...state,
@@ -126,6 +131,10 @@ export const reducer = (state: State, action: Action): State => {
         ...state,
         toasts: state.toasts.filter((t) => t.id !== action.toastId),
       }
+    default:
+        // Ensure exhaustive check if needed or just return state
+        // const _exhaustiveCheck: never = action; 
+        return state; 
   }
 }
 
@@ -191,4 +200,5 @@ function useToast() {
   }
 }
 
-export { useToast, toast }
+export { toast, useToast }
+

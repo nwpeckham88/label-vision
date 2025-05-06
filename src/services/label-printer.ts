@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts, PageSizes, PDFFont, degrees } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 /**
  * Represents the dimensions for a label.
