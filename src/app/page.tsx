@@ -21,10 +21,17 @@ import { AlertTriangle, Ruler, ServerCrash, Upload, Wand2, Wifi, WifiOff } from 
 import type { FC } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
-// Python Desktop App API URLs (Now relative paths)
-const PYTHON_API_BASE_URL = '/api'; // Base path for API calls served by Flask
-const PYTHON_HEALTH_URL = `${PYTHON_API_BASE_URL}/health`;
-const PYTHON_PRINTERS_URL = `${PYTHON_API_BASE_URL}/printers`;
+// Get API base URL from environment variable, default to relative path if not set
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
+console.log(`Using API Base URL: ${API_BASE_URL}`); // Log the base URL being used
+
+// Python Desktop App API URLs (Now using environment variable)
+// const PYTHON_API_BASE_URL = '/api'; // Base path for API calls served by Flask - REMOVED
+const PYTHON_HEALTH_URL = `${API_BASE_URL}/health`;
+const PYTHON_PRINTERS_URL = `${API_BASE_URL}/printers`;
+const PYTHON_PROCESS_IMAGE_URL = `${API_BASE_URL}/process-image-for-label`;
+const PYTHON_PRINT_URL = `${API_BASE_URL}/print`;
+
 const HEALTH_CHECK_INTERVAL = 10000; // Check health every 10 seconds
 
 // Define standard label sizes (dimensions only)
@@ -66,7 +73,7 @@ const LabelVisionPage: FC = () => {
   // --- API Health Check ---
   const checkApiHealth = useCallback(async () => {
     try {
-      // Use relative URL
+      // Use full URL constructed with environment variable
       const response = await fetch(PYTHON_HEALTH_URL);
       if (response.ok) {
         const data = await response.json();
@@ -103,7 +110,7 @@ const LabelVisionPage: FC = () => {
          return;
       }
       try {
-        // Use relative URL
+        // Use full URL constructed with environment variable
         const response = await fetch(PYTHON_PRINTERS_URL);
         if (!response.ok) {
           throw new Error(`Failed to fetch printers: ${response.statusText}`);
@@ -143,7 +150,8 @@ const LabelVisionPage: FC = () => {
     console.log("Photo uploaded, calling API...");
 
     try {
-      const response = await fetch('/api/process-image-for-label', {
+      // Use full URL constructed with environment variable
+      const response = await fetch(PYTHON_PROCESS_IMAGE_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -240,7 +248,8 @@ const LabelVisionPage: FC = () => {
        console.log(`PDF generated (${pdfBytes.length} bytes), sending to print API...`);
        toast({ title: 'Sending to printer...' });
 
-      const response = await fetch('/api/print', {
+      // Use full URL constructed with environment variable
+      const response = await fetch(PYTHON_PRINT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

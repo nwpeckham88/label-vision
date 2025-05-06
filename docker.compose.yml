@@ -1,16 +1,26 @@
 version: '3.8' # Specifies the Docker Compose file format version
 
 services:
-  app: # Defines the main application service
-    build: . # Instructs Docker Compose to build the image using the Dockerfile in the current directory
+  backend: # Renamed service for clarity (optional)
+    build:
+      context: . # Use the current directory for build context
+      dockerfile: Dockerfile # Explicitly specify the Dockerfile
+      args: # Pass build arguments if needed (e.g., for different ports)
+        BACKEND_PORT: 5001
+        FLASK_DEBUG: true
     env_file:
-      - .env # Loads environment variables from the .env file in the current directory
+      - .env # Load GEMINI_API_KEY and potentially other secrets
     ports:
-      - "5001:${BACKEND_PORT:-5001}" # Maps port 5001 on the host to port 5001 in the container (adjust if your app uses a different port)
-    environment:
-      - BACKEND_HOST=0.0.0.0
-      - BACKEND_PORT=5001
-      - GEMINI_API_KEY=${GEMINI_API_KEY} # Make sure this is set, e.g., via .env file
-    # volumes: # Optional: Uncomment and adjust if you need to mount local directories into the container (useful for development)
-    #   - ./src:/app/src # Example: Mounts the local ./src directory to /app/src inside the container
-    restart: unless-stopped # Configures the container to restart automatically unless manually stopped
+      # Map host port 5001 to the container port defined by BACKEND_PORT (default 5001)
+      - "5001:${BACKEND_PORT:-5001}"
+    volumes:
+      # Mount the local backend code into the container for live updates
+      - ./backend:/app/backend
+      # Mount the local Next.js static output (if needed for testing)
+      # This assumes app.py in dev mode looks for it in /app/out
+      - ./out:/app/out
+    # environment:
+      # FLASK_DEBUG, BACKEND_HOST, BACKEND_PORT are now set in Dockerfile ENV
+      # GEMINI_API_KEY should be loaded from .env via env_file
+    command: flask run --host=0.0.0.0 --port=5001 --debug # Optional: Explicit command override
+    restart: unless-stopped

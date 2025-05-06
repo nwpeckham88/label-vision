@@ -4,9 +4,16 @@ import tempfile
 import base64
 import subprocess
 import logging
-import requests # For optional status callback
+import requests # For optional status callback & shutdown
 import sys
 import io # For handling image bytes
+import threading # For running Flask and GUI separately
+import tkinter as tk # For the basic GUI
+from tkinter import ttk # Themed Tkinter widgets
+import queue # For passing logs to GUI
+from tkinter import scrolledtext # For the log display widget
+import json # For loading/saving config
+from tkinter import messagebox # For restart confirmation
 
 # --- Gen AI Imports and Config ---
 import google.generativeai as genai
@@ -14,7 +21,7 @@ from google.api_core import exceptions as google_exceptions # For specific error
 from PIL import Image # To check image format/validity
 # --- End Gen AI Imports and Config ---
 
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, abort
 from flask_cors import CORS
 
 # --- Determine Base Directory and Web App Directory ---
@@ -34,25 +41,71 @@ else:
     WEB_APP_DIR = os.path.abspath(os.path.join(APP_BASE_DIR, '..', 'out'))
     logging.info(f"Running in development mode. APP_BASE_DIR: {APP_BASE_DIR}, WEB_APP_DIR: {WEB_APP_DIR}")
 
-# --- Configure Gen AI ---
-# IMPORTANT: Configure API Key securely, preferably via environment variable
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-if not GEMINI_API_KEY:
-    logging.warning("GEMINI_API_KEY environment variable not set. Label generation will not work.")
-    genai_configured = False
-else:
+# --- Configuration File Handling ---
+
+CONFIG_FILE = "config.json"
+
+CONFIG_FILE_PATH = os.path.join(APP_BASE_DIR, CONFIG_FILE) if IS_BUNDLED else os.path.abspath(os.path.join(APP_BASE_DIR, CONFIG_FILE))
+
+def load_config():
+    """Loads configuration from config.json."""
+    default_config = {"host": "127.0.0.1", "port": 5001, "api_key": None}
+
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        genai_configured = True
-        logging.info("Google Generative AI configured successfully.")
-    except Exception as e:
-        logging.error(f"Failed to configure Google Generative AI: {e}", exc_info=True)
-        genai_configured = False
+        if os.path.exists(CONFIG_FILE_PATH):
+            with open(CONFIG_FILE_PATH, 'r') as f:
+                config = json.load(f)
+
+            # Ensure all keys are present, merge with defaults
+            for key, value in default_config.items():
+                if key not in config:
+                    config[key] = value
+
+            logging.info(f"Loaded configuration from {CONFIG_FILE_PATH}")
+            return config
+        else:
+            logging.info(f"Config file {CONFIG_FILE_PATH} not found, using defaults.")
+            return default_config
+    except (json.JSONDecodeError, IOError) as e:
+        logging.error(f"Error loading {CONFIG_FILE_PATH}: {e}. Using defaults.", exc_info=True)
+
+        return default_config
+
+def save_config(config):
+    """Saves configuration to config.json."""
+    try:
+        with open(CONFIG_FILE_PATH, 'w') as f:
+            json.dump(config, f, indent=4)
+
+        logging.info(f"Configuration saved to {CONFIG_FILE_PATH}")
+        return True
+    except IOError as e:
+        logging.error(f"Error saving configuration to {CONFIG_FILE_PATH}: {e}", exc_info=True)
+
+        messagebox.showerror("Save Error", f"Could not save configuration to {CONFIG_FILE_PATH}:\n{e}")
+        return False
+# --- End Configuration File Handling ---
+
+# --- Configure Gen AI --- Based on loaded config or env var ---
+
+# Moved API key configuration to __main__ after loading config
+
 # --- End Configure Gen AI ---
 
 # --- Configuration ---
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Custom Logging Handler for GUI ---
+class QueueHandler(logging.Handler):
+    """Custom logging handler to put logs into a queue."""
+    def __init__(self, log_queue):
+        super().__init__()
+        self.log_queue = log_queue
+
+    def emit(self, record):
+        self.log_queue.put(self.format(record))
+# --- End Custom Logging Handler ---
 
 # Initialize Flask app
 # Serve static files from the determined WEB_APP_DIR/_next/static
@@ -238,6 +291,147 @@ def print_cups(printer_name, pdf_data, job_name="LabelVision Print"):
              except OSError as e:
                  logging.warning(f"Could not remove temporary file {temp_pdf_path}: {e}")
 
+
+# --- GUI Functions ---
+
+def shutdown_app(root, host, port):
+    """Sends shutdown request to Flask and closes the GUI."""
+    logging.info("GUI requesting backend shutdown.")
+    try:
+        # Send request to the shutdown endpoint
+        requests.post(f"http://{host}:{port}/api/shutdown")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Could not send shutdown request: {e}")
+    finally:
+        # Regardless of request success, destroy the GUI window
+        logging.info("Destroying GUI window.")
+        root.destroy()
+
+def run_gui(host, port, log_queue, initial_config):
+    """Creates and runs the Tkinter status GUI with log viewer and config options."""
+    root = tk.Tk()
+    root.title("Label Vision Service")
+
+    initial_height = 300 # Increased height for config options
+    logs_height = 200    # Additional height when logs are shown
+    root.geometry(f"450x{initial_height}") # Wider for logs/config
+    root.resizable(True, True) # Allow resizing
+    root.minsize(450, initial_height) # Minimum size
+
+    # --- Variables for config entries ---
+    host_var = tk.StringVar(value=initial_config.get('host', '127.0.0.1'))
+    port_var = tk.StringVar(value=str(initial_config.get('port', 5001)))
+    api_key_var = tk.StringVar(value=initial_config.get('api_key', '')) # Load actual key
+    api_key_status_text = tk.StringVar()
+
+    def update_api_key_status():
+        if api_key_var.get():
+            api_key_status_text.set("Set")
+        else:
+            api_key_status_text.set("Not Set")
+
+    update_api_key_status() # Initial status check
+
+    # Make sure closing the window calls our shutdown function
+    root.protocol("WM_DELETE_WINDOW", lambda: shutdown_app(root, host, port)) # Use initial host/port for shutdown request
+
+    main_frame = ttk.Frame(root, padding="10")
+    main_frame.pack(expand=True, fill=tk.BOTH)
+    main_frame.columnconfigure(0, weight=1) # Allow content to expand horizontally
+
+    # --- Top Info Section --- 
+    info_frame = ttk.Frame(main_frame)
+    info_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+    info_frame.columnconfigure(0, weight=1)
+
+    status_label = ttk.Label(info_frame, text=f"Service running at:")
+    status_label.grid(row=0, column=0, sticky="w")
+
+    address_label = ttk.Label(info_frame, text=f"http://{host}:{port}", font=("TkDefaultFont", 10, "bold"))
+    address_label.grid(row=1, column=0, sticky="w")
+
+    # --- Configuration Section --- 
+    config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
+    config_frame.grid(row=2, column=0, sticky="ew", pady=(10, 10))
+    config_frame.columnconfigure(1, weight=1) # Allow entry fields to expand
+
+    ttk.Label(config_frame, text="Host:").grid(row=0, column=0, sticky="w", padx=(0, 5), pady=2)
+    host_entry = ttk.Entry(config_frame, textvariable=host_var, width=30)
+    host_entry.grid(row=0, column=1, sticky="ew", pady=2)
+
+    ttk.Label(config_frame, text="Port:").grid(row=1, column=0, sticky="w", padx=(0, 5), pady=2)
+    port_entry = ttk.Entry(config_frame, textvariable=port_var, width=10)
+    port_entry.grid(row=1, column=1, sticky="w", pady=2) # Port doesn't need to expand fully
+
+    ttk.Label(config_frame, text="Gemini API Key:").grid(row=2, column=0, sticky="w", padx=(0, 5), pady=2)
+    api_key_entry = ttk.Entry(config_frame, textvariable=api_key_var, show="*", width=30)
+    # --- Controls Section --- 
+    controls_frame = ttk.Frame(main_frame)
+    controls_frame.grid(row=1, column=0, sticky="ew")
+
+    # Log toggle checkbox
+    log_visible = tk.BooleanVar()
+    log_check = ttk.Checkbutton(controls_frame, text="Show Logs", variable=log_visible, command=lambda: toggle_logs())
+    log_check.pack(side=tk.LEFT, padx=(0, 10))
+
+    quit_button = ttk.Button(controls_frame, text="Quit Service", command=lambda: shutdown_app(root, host, port))
+    quit_button.pack(side=tk.RIGHT)
+
+    # --- Log Viewer Section (Initially hidden) ---
+    log_frame = ttk.Frame(main_frame, padding=(0, 10, 0, 0)) # Add padding top
+    # Intentionally not packed initially
+
+    log_text_widget = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, wrap=tk.WORD)
+    log_text_widget.pack(expand=True, fill=tk.BOTH)
+
+    def toggle_logs():
+        if log_visible.get():
+            # Show logs: Place the log frame and increase window height
+            new_height = root.winfo_height() + logs_height
+            log_frame.grid(row=2, column=0, sticky="nsew", pady=(10, 0)) 
+            main_frame.rowconfigure(2, weight=1) # Allow log frame to expand vertically
+            root.geometry(f"{root.winfo_width()}x{new_height}")
+        else:
+            # Hide logs: Remove the log frame and decrease window height
+            new_height = root.winfo_height() - logs_height
+            log_frame.grid_forget()
+            main_frame.rowconfigure(2, weight=0)
+            root.geometry(f"{root.winfo_width()}x{max(initial_height, new_height)}") # Prevent shrinking too small
+
+    def poll_log_queue():
+        """Check queue for logs and update the widget."""
+        while True:
+            try:
+                record = log_queue.get(block=False)
+            except queue.Empty:
+                break
+            else:
+                log_text_widget.configure(state='normal')
+                log_text_widget.insert(tk.END, record + '\n')
+                log_text_widget.configure(state='disabled')
+                log_text_widget.yview(tk.END) # Auto-scroll
+        # Schedule next check
+        root.after(100, poll_log_queue)
+
+    logging.info("Starting Tkinter GUI main loop.")
+    root.after(100, poll_log_queue) # Start polling the log queue
+    root.mainloop() # Blocks until the window is closed
+    logging.info("Tkinter GUI main loop ended.")
+
+# --- Flask Server Function ---
+
+def run_flask(host, port, debug_mode):
+    """Runs the Flask development server."""
+    # Important: When using Gunicorn via Docker CMD, these app.run settings are bypassed.
+    # They are primarily for direct `python app.py` execution.
+    logging.info(f"Attempting to start Flask server on {host}:{port} (Debug: {debug_mode})...")
+    try:
+        # Use use_reloader=False to prevent issues when run from a thread or bundled
+        app.run(host=host, port=port, debug=debug_mode, use_reloader=False)
+    except Exception as e:
+        logging.error(f"Failed to start Flask server: {e}", exc_info=True)
+    finally:
+        logging.info("Flask server run() method has exited.")
 
 # --- API Endpoints (Prefixed with /api) ---
 
@@ -474,6 +668,24 @@ def print_label_api():
         status_code = 500 if "library not available" in error_message else 400 # Use 500 for setup issues, 400/500 for runtime print errors
         return jsonify({"detail": error_message}), status_code
 
+# --- New Shutdown Endpoint ---
+@app.route('/api/shutdown', methods=['POST'])
+def shutdown_server():
+    """Internal endpoint to shut down the Werkzeug server."""
+    logging.info("Received /api/shutdown request.")
+    func = request.environ.get('werkzeug.server.shutdown')
+    if func is None:
+        logging.error('Shutdown endpoint called, but not running with the Werkzeug Server.')
+        # Abort might be too harsh, maybe just return error?
+        # For a dev server, this indicates a problem.
+        return jsonify({"detail": "Shutdown not available."}), 500
+    try:
+        logging.info('Calling werkzeug.server.shutdown()...')
+        func() # Call the shutdown function
+        return jsonify({"message": "Server shutting down..."}), 200
+    except Exception as e:
+        logging.error(f"Error during werkzeug shutdown: {e}", exc_info=True)
+        return jsonify({"detail": "Error during shutdown sequence."}), 500
 
 # --- Static File Serving & Catch-all for Client-Side Routing ---
 
@@ -508,24 +720,33 @@ def serve_webapp(path):
         return send_file(index_path)
 
 
-# --- Main Execution ---
+# --- Main Execution --- (Updated for GUI + Flask Thread)
 if __name__ == '__main__':
-    # Log entry into the main execution block
-    logging.info("Starting main execution block (__name__ == '__main__')") 
+    logging.info("Starting main execution block (__name__ == '__main__')")
 
-    # Use environment variable for port, default to 5001
+    # --- Log Queue Setup ---
+    log_queue = queue.Queue()
+    queue_handler = QueueHandler(log_queue)
+    queue_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    # Add the queue handler to the root logger
+    logging.getLogger().addHandler(queue_handler)
+    # BasicConfig is still useful for initial console logging before GUI starts
+    # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') # Keep or adjust as needed
+
+    # Get host, port, debug from environment variables
     port = int(os.environ.get('BACKEND_PORT', 5001))
-    # Use environment variable for host.
-    # Default to '0.0.0.0' which is suitable for Docker/network access.
-    # For local-only development, you might set BACKEND_HOST=127.0.0.1 explicitly.
-    host = os.environ.get('BACKEND_HOST', '0.0.0.0')
-    # Use environment variable for debug mode, default to False
+    host = os.environ.get('BACKEND_HOST', '127.0.0.1') # Default to localhost for direct run
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
 
-    # Log the determined host and port before starting server
-    logging.info(f"Flask development server configured for {host}:{port} (Debug: {debug_mode})" ) 
+    # Log the loaded configuration
+    logging.info(f"Loaded BACKEND_PORT: {port}")
+    logging.info(f"Loaded BACKEND_HOST: {host}")
+    logging.info(f"Loaded FLASK_DEBUG: {debug_mode}")
+
+    logging.info(f"Configured for {host}:{port} (Debug: {debug_mode})")
     logging.info(f"Web application static root directory: {WEB_APP_DIR}")
 
+    # Basic check for frontend files (same as before)
     if not os.path.exists(WEB_APP_DIR) or not os.path.exists(os.path.join(WEB_APP_DIR, 'index.html')):
          logging.warning("---")
          logging.warning(f"Web app directory ('{WEB_APP_DIR}') or index.html not found.")
@@ -533,10 +754,23 @@ if __name__ == '__main__':
          logging.warning("API endpoints will work, but the web interface will not load.")
          logging.warning("---")
 
-    # Important: When using Gunicorn via Docker CMD, these app.run settings are bypassed.
-    # They are primarily for direct `python app.py` execution.
-    # Add a log before attempting to run the dev server
-    logging.info("Attempting to start Flask development server using app.run()...") 
-    app.run(host=host, port=port, debug=debug_mode)
-    # Add a log *after* app.run() if it ever returns (e.g., on shutdown)
-    logging.info("Flask development server has stopped.") 
+    # Create and start Flask server in a daemon thread
+    # Daemon threads exit automatically when the main program exits
+    logging.info("Creating Flask server thread.")
+    flask_thread = threading.Thread(
+        target=run_flask,
+        args=(host, port, debug_mode),
+        daemon=True # Ensure thread exits when main GUI thread exits
+    )
+    flask_thread.start()
+    logging.info("Flask server thread started.")
+
+    # Run the Tkinter GUI in the main thread (this blocks until GUI closes)
+    # Pass the log_queue to the GUI function
+    run_gui(host, port, log_queue)
+
+    # Code here will run after the GUI window is closed
+    logging.info("GUI closed, main execution block finished.")
+    # Allow some time for server shutdown if needed, though daemon should handle it.
+    # Optional: flask_thread.join(timeout=2) # Wait briefly for thread
+    sys.exit(0) # Ensure clean exit

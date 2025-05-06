@@ -14,6 +14,10 @@ interface PrintControlsProps {
   disabled?: boolean; // Should disable printer selection and print button
 }
 
+// Get API base URL from environment variable, default to relative path if not set
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
+const PYTHON_PRINTERS_URL = `${API_BASE_URL}/printers`;
+
 // Define types for the API response and potential errors
 interface ApiError {
   detail: string;
@@ -33,7 +37,7 @@ export function PrintControls({ onPrint, disabled = false }: PrintControlsProps)
     setIsLoadingPrinters(true);
     setFetchError(null);
     try {
-      const response = await fetch('/api/printers');
+      const response = await fetch(PYTHON_PRINTERS_URL);
       if (!response.ok) {
          let errorDetail = `HTTP error! status: ${response.status}`;
           try {

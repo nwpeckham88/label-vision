@@ -39,3 +39,9 @@ next-env.d.ts
 
 .genkit/*
 .env*
+
+backend/dist/
+backend/build/
+backend/.venv
+.venv
+
