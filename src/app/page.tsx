@@ -1,24 +1,25 @@
 'use client';
 
 import { ItemList } from '@/components/item-list';
-import { LabelDimensionsForm } from '@/components/label-dimensions-form'; // Add this import
+import { LabelDimensionsForm } from '@/components/label-dimensions-form';
 import { LabelPreview } from '@/components/label-preview';
 import { PhotoUploader } from '@/components/photo-uploader';
 import { PrintControls } from '@/components/print-controls';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from '@/components/ui/separator';
 import { Toaster } from '@/components/ui/toaster';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'; // Import Tooltip components
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { capitalizeWords } from '@/lib/utils';
-import type { LabelDimensions } from '@/services/label-printer'; // Use LabelDimensions
+import type { LabelDimensions } from '@/services/label-printer';
 import { generatePdf, LabelContent } from '@/services/label-printer';
 import { AlertTriangle, Ruler, ServerCrash, Upload, Wand2, Wifi, WifiOff } from 'lucide-react';
 import type { FC } from 'react';
-import { useCallback, useEffect, useState, useTransition } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 // Python Desktop App API URLs (Now relative paths)
 const PYTHON_API_BASE_URL = '/api'; // Base path for API calls served by Flask
@@ -50,20 +51,15 @@ interface ApiError {
 
 const LabelVisionPage: FC = () => {
   const [photoDataUri, setPhotoDataUri] = useState<string | null>(null);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null); // Store the File object if needed later
   const [identifiedItems, setIdentifiedItems] = useState<string[]>([]);
   const [labelSummary, setLabelSummary] = useState<string>('');
   const [selectedLabelSizeKey, setSelectedLabelSizeKey] = useState<string>(DEFAULT_LABEL_SIZE_KEY);
   const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
   const [selectedPrinter, setSelectedPrinter] = useState<string | null>(null);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('pending');
-  const [error, setError] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false); // Loading state for AI processing
-  const [processingError, setProcessingError] = useState<string | null>(null); // Error state
-  const [currentDimensions, setCurrentDimensions] = useState<LabelDimensions>(LABEL_SIZES[DEFAULT_LABEL_SIZE_KEY]); // Add state for dimensions
-
-  const [isIdentifying, startIdentifyingTransition] = useTransition();
-  const [isGeneratingSummary, startGeneratingSummaryTransition] = useTransition();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingError, setProcessingError] = useState<string | null>(null);
+  const [currentDimensions, setCurrentDimensions] = useState<LabelDimensions>(LABEL_SIZES[DEFAULT_LABEL_SIZE_KEY]);
 
   const { toast } = useToast();
 
@@ -139,11 +135,10 @@ const LabelVisionPage: FC = () => {
 
   const handlePhotoUploaded = useCallback(async (dataUri: string, file: File) => {
     setPhotoDataUri(dataUri);
-    setUploadedFile(file);
-    setIdentifiedItems([]); // Clear previous results
+    setIdentifiedItems([]);
     setLabelSummary('');
     setProcessingError(null);
-    setIsProcessing(true); // Start loading indicator
+    setIsProcessing(true);
 
     console.log("Photo uploaded, calling API...");
 
@@ -169,13 +164,13 @@ const LabelVisionPage: FC = () => {
         throw new Error(errorDetail);
       }
 
-      const result = await response.json() as ProcessImageResponse;
+      const result: ProcessImageResponse = await response.json();
       console.log("API Response:", result);
       setIdentifiedItems(result.identifiedItems || []);
       setLabelSummary(result.summary || 'Error: No summary received');
       toast({
          title: "Analysis Complete",
-         description: `Found ${result.identifiedItems?.length || 0} items. Summary: "${result.summary}"`,
+         description: `Found ${result.identifiedItems?.length || 0} items. Summary: \"${result.summary}\"`,
       });
 
     } catch (error) {
@@ -187,17 +182,15 @@ const LabelVisionPage: FC = () => {
          title: 'Image Processing Failed',
          description: errorMessage,
        });
-        // Clear results on error
         setIdentifiedItems([]);
         setLabelSummary('');
     } finally {
-      setIsProcessing(false); // Stop loading indicator
+      setIsProcessing(false);
     }
   }, [toast]);
 
   const handlePhotoCleared = useCallback(() => {
     setPhotoDataUri(null);
-    setUploadedFile(null);
     setIdentifiedItems([]);
     setLabelSummary('');
     setProcessingError(null);
@@ -306,50 +299,50 @@ const LabelVisionPage: FC = () => {
     }
   };
 
-
-  const isLoading = isIdentifying || isGeneratingSummary;
-  const canGenerate = !isLoading && identifiedItems.length > 0 && labelSummary !== null && labelSummary !== 'Empty';
-  const canPrint = canGenerate && selectedPrinter && apiStatus === 'healthy';
-
+  const isLoading = isProcessing;
 
   return (
     <TooltipProvider>
       <div className="container mx-auto p-4 md:p-8 min-h-screen flex flex-col bg-background">
         <header className="mb-8 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2 flex items-center gap-2">
-              <Wand2 className="text-primary h-8 w-8" /> Label Vision
-            </h1>
-            <p className="text-muted-foreground">
-              Upload a photo, identify items, generate a label, and print it.
-            </p>
+          <div className="flex items-center gap-3">
+             <Wand2 className="text-primary h-8 w-8" />
+             <div>
+                <h1 className="text-3xl md:text-4xl font-bold text-foreground">Label Vision</h1>
+                <p className="text-muted-foreground">
+                    Upload a photo, identify items, generate a label, and print it.
+                </p>
+             </div>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-                <div className="p-2 rounded-full bg-muted/50">
-                 {getApiStatusIcon()}
-                </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{getApiStatusTooltip()}</p>
-            </TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                  <div className="p-2 rounded-full bg-card border border-border shadow-sm">
+                  {getApiStatusIcon()}
+                  </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{getApiStatusTooltip()}</p>
+              </TooltipContent>
+            </Tooltip>
+             <ThemeToggle /> {/* Add ThemeToggle */}
+          </div>
         </header>
 
-        {error && (
+        {processingError && (
           <Alert variant="destructive" className="mb-6">
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{processingError}</AlertDescription>
           </Alert>
         )}
 
         <main className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Column 1: Upload & Settings */}
           <div className="flex flex-col gap-6 md:order-1">
-            <Card>
+            <Card className="shadow-md">
               <CardHeader>
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <CardTitle className="text-xl font-semibold flex items-center gap-2">
                   <Upload className="h-5 w-5" />
                   1. Upload Photo
                 </CardTitle>
@@ -363,16 +356,16 @@ const LabelVisionPage: FC = () => {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="shadow-md">
               <CardHeader>
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <CardTitle className="text-xl font-semibold flex items-center gap-2">
                   <Ruler className="h-5 w-5" />
                   2. Label Settings
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <Label htmlFor="label-size" className="mb-2 block">Label Size</Label>
+                  <Label htmlFor="label-size" className="mb-2 block font-medium">Label Size</Label>
                   <Select
                     value={selectedLabelSizeKey}
                     onValueChange={handleLabelSizeChange}
@@ -386,14 +379,14 @@ const LabelVisionPage: FC = () => {
                     <SelectContent>
                       {Object.entries(LABEL_SIZES).map(([key, config]) => (
                         <SelectItem key={key} value={key}>
-                          {capitalizeWords(key)} ({config.labelWidthInches} x {config.labelHeightInches}")
+                          {capitalizeWords(key)} ({config.labelWidthInches} x {config.labelHeightInches}&quot;)
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <Label htmlFor="printer-select" className="mb-2 block">Printer</Label>
+                  <Label htmlFor="printer-select" className="mb-2 block font-medium">Printer</Label>
                   <Select
                     value={selectedPrinter ?? ''}
                     onValueChange={handlePrinterChange}
@@ -429,7 +422,7 @@ const LabelVisionPage: FC = () => {
 
             <LabelDimensionsForm
                initialDimensions={currentDimensions}
-               onDimensionsChange={(newDimensions) => {
+               onDimensionsChange={(newDimensions: LabelDimensions) => {
                  setCurrentDimensions(newDimensions);
                }}
                disabled={isProcessing}
@@ -440,7 +433,7 @@ const LabelVisionPage: FC = () => {
 
           {/* Column 2: Identify */}
           <div className="flex flex-col gap-6 md:order-2">
-            <ItemList items={identifiedItems} isLoading={isIdentifying} title="3. Identified Items" />
+            <ItemList items={identifiedItems} isLoading={isLoading} title="3. Identified Items" />
           </div>
 
           {/* Column 3: Generate & Print */}
@@ -458,7 +451,7 @@ const LabelVisionPage: FC = () => {
 
         <footer className="mt-12 text-center text-sm text-muted-foreground">
           <Separator className="my-4" />
-          Powered by Firebase Studio & Genkit
+          Powered by Google Cloud & Genkit
         </footer>
       </div>
       <Toaster />
@@ -467,10 +460,3 @@ const LabelVisionPage: FC = () => {
 };
 
 export default LabelVisionPage;
-
-// Helper Buffer shim for browser environments if needed,
-// otherwise rely on Node.js Buffer if running in a Node context.
-// Usually Next.js handles this, but good practice if unsure.
-if (typeof Buffer === 'undefined') {
-   globalThis.Buffer = require('buffer/').Buffer;
-}
